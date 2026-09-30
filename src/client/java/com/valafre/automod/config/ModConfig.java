@@ -142,6 +142,10 @@ public final class ModConfig {
 	public boolean useSprint = true;
 	/** Strafe gauche/droite autour de la cible (fait balayer l'écran). Désactivé : en combat on avance seulement vers la cible. */
 	public boolean strafeInCombat = false;
+	/** Petits pas de côté occasionnels (quelques ticks, toutes les 3 à 7 s environ) pour un mouvement moins mécanique. Avec "Humaniser". */
+	public boolean occasionalStrafe = true;
+	public int occasionalStrafeMinTicks = 60;
+	public int occasionalStrafeMaxTicks = 140;
 	/** Sneak (accroupi) pendant le combat contre le boss. Ignoré si l'option vanilla "sneak en bascule" est active. */
 	public boolean sneakOnBoss = true;
 	/** Enderman normal : abandonné si toujours en vie X ticks après le premier contact (portée + ligne de vue). Jamais pour le boss. */

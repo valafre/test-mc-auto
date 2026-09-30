@@ -29,6 +29,8 @@ public final class AttackTargetTask extends Task {
 	private final Random rng = new Random();
 	private int strafeDir = 1;
 	private int switchIn;
+	private int burstLeft;     // ticks restants du petit pas de côté en cours
+	private int nextBurstIn;   // ticks avant le prochain petit pas de côté
 
 	/** @param sneak true : reste accroupi pendant toute la tâche (combat contre le boss)
 	 *  @param holdPosition true : le joueur garde sa position (imposée par une mécanique), vise et frappe sans bouger */
@@ -38,6 +40,7 @@ public final class AttackTargetTask extends Task {
 		this.holdPosition = holdPosition;
 		this.sneak = sneak;
 		this.strafeDir = rng.nextBoolean() ? 1 : -1;
+		this.nextBurstIn = 30 + rng.nextInt(60);
 	}
 
 	@Override
@@ -61,7 +64,8 @@ public final class AttackTargetTask extends Task {
 				strafe(f, cfg, info);
 			} else if (inStrafeZone) {
 				// Sans strafe : on avance vers la cible en continu (pas d'arrêt pour frapper), sans balayer l'écran.
-				f.movement().combatMove(f.player(), owner(), info.distance(), CLOSE_BACK_DISTANCE, cfg.combatMinDistance, 0);
+				f.movement().combatMove(f.player(), owner(), info.distance(), CLOSE_BACK_DISTANCE, cfg.combatMinDistance,
+					occasionalSide(cfg));
 			} else {
 				chase.step(f, owner(), target, info); // trop loin ou sans ligne de vue : on rejoint / contourne
 			}
@@ -74,6 +78,28 @@ public final class AttackTargetTask extends Task {
 			f.combat().tryAttack(f.player(), target);
 		}
 		return TaskStatus.RUNNING;
+	}
+
+	/**
+	 * Petit pas de côté occasionnel (4 à 8 ticks, toutes les 3 à 7 s environ, sens aléatoire) pour casser la ligne droite.
+	 * @return -1 / +1 pendant un pas de côté, 0 sinon
+	 */
+	private int occasionalSide(ModConfig cfg) {
+		if (!cfg.humanize || !cfg.occasionalStrafe) {
+			return 0;
+		}
+		if (burstLeft > 0) {
+			burstLeft--;
+			return strafeDir;
+		}
+		if (--nextBurstIn <= 0) {
+			burstLeft = 4 + rng.nextInt(5);
+			strafeDir = rng.nextBoolean() ? 1 : -1;
+			int min = Math.max(1, cfg.occasionalStrafeMinTicks);
+			int max = Math.max(min, cfg.occasionalStrafeMaxTicks);
+			nextBurstIn = min + rng.nextInt(max - min + 1);
+		}
+		return 0;
 	}
 
 	/** Mouvement continu autour de la cible ; le sens change de temps en temps et s'inverse devant un mur ou un vide. */
