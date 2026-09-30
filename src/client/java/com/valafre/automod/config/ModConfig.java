@@ -128,6 +128,10 @@ public final class ModConfig {
 	public double positionCombatMaxDistance = 6.0;
 	/** Rayon horizontal autour de la mécanique dans lequel un Y inférieur est considéré "directement dessous". */
 	public double underMechanicRadius = 1.5;
+	/** Cible d'un Enderman sans ligne de vue depuis ce nombre de ticks : jugée inaccessible et abandonnée (pas pour le boss). */
+	public int unreachableAfterTicks = 60;
+	/** Durée pendant laquelle une cible abandonnée est ignorée. */
+	public int skipTargetTicks = 600;
 	public boolean allowAbovePosition = true;
 	public int maxRepositionAttempts = 3;
 

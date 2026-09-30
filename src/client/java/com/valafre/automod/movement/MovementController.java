@@ -32,6 +32,7 @@ public final class MovementController {
 	private final PathController paths;
 
 	private boolean forwardOn;
+	private boolean backOn;
 	private boolean leftOn;
 	private boolean rightOn;
 
@@ -40,7 +41,7 @@ public final class MovementController {
 	private BlockPos pathGoal;
 	private int ticksSincePath = Integer.MAX_VALUE / 2;
 	private boolean lineClear;
-	private boolean pathComplete;
+	private boolean pathComplete = true;
 	private int ticksSinceLookahead;
 	private int collisionTicks;   // ticks consécutifs collé à un obstacle : déclenche un nouveau calcul de chemin
 	private int ticksSinceLineCheck = Integer.MAX_VALUE / 2;
@@ -116,6 +117,7 @@ public final class MovementController {
 
 	private void resetMotion() {
 		forwardOn = false;
+		backOn = false;
 		leftOn = false;
 		rightOn = false;
 		windowStart = null;
@@ -152,11 +154,14 @@ public final class MovementController {
 
 		BlockPos goal = BlockPos.containing(dest.x, dest.y + 0.05, dest.z);
 		boolean goalMoved = pathGoal == null || pathGoal.distSqr(goal) > 4;
-		boolean needsPath = goalMoved || ++ticksSincePath >= cfg.pathRecomputeIntervalTicks
+		// Chemin partiel : recherche plus large mais moins souvent (limite le coût CPU).
+		int interval = pathComplete ? cfg.pathRecomputeIntervalTicks : cfg.pathRecomputeIntervalTicks * 2;
+		int budget = pathComplete ? cfg.pathMaxNodes : cfg.pathMaxNodes * 2;
+		boolean needsPath = goalMoved || ++ticksSincePath >= interval
 			|| pathIndex >= path.size() || (collisionTicks > 12);
 		if (needsPath) {
 			PathController.PathResult result =
-				paths.findPathBestEffort(state.level(), state.player().blockPosition(), goal, cfg.pathMaxNodes);
+				paths.findPathBestEffort(state.level(), state.player().blockPosition(), goal, budget);
 			path = result.path();
 			pathComplete = result.complete();
 			pathIndex = 0;
@@ -216,6 +221,8 @@ public final class MovementController {
 		boolean braking = distToDest - state.horizontalSpeed() * BRAKE_LOOKAHEAD_TICKS <= stopDistance;
 
 		forwardOn = hysteresis(forwardOn, fwd) && !braking;
+		// Reculer : indispensable quand on regarde la cible mais que le chemin part dans l'autre sens (contournement d'un mur).
+		backOn = hysteresis(backOn, -fwd) && !braking;
 		leftOn = hysteresis(leftOn, -side);
 		rightOn = hysteresis(rightOn, side);
 		if (leftOn && rightOn) { // ne peut arriver qu'à la limite exacte des seuils
@@ -224,6 +231,7 @@ public final class MovementController {
 		}
 
 		input.request(owner, Key.FORWARD, forwardOn);
+		input.request(owner, Key.BACK, backOn);
 		input.request(owner, Key.LEFT, leftOn);
 		input.request(owner, Key.RIGHT, rightOn);
 

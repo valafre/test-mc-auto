@@ -6,7 +6,10 @@ import com.valafre.automod.core.PlayerState;
 import com.valafre.automod.targeting.TargetInfo;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.level.ClipContext;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
@@ -54,6 +57,23 @@ public final class CombatController {
 		nextInterval = Math.max(1, interval);
 	}
 
+	/**
+	 * Ligne de vue oeil -> cible : aucun bloc solide entre les deux (test du centre puis de la tête).
+	 * Empêche de croire "à portée" une cible qui n'est qu'à 2 blocs MAIS derrière un mur.
+	 */
+	public boolean hasLineOfSight(PlayerState state, Entity target) {
+		Vec3 eye = state.eyePosition();
+		AABB box = target.getBoundingBox();
+		Vec3 center = box.getCenter();
+		return isVisible(state, eye, center)
+			|| isVisible(state, eye, new Vec3(center.x, box.minY + box.getYsize() * 0.9, center.z));
+	}
+
+	private static boolean isVisible(PlayerState state, Vec3 eye, Vec3 to) {
+		ClipContext context = new ClipContext(eye, to, ClipContext.Block.COLLIDER, ClipContext.Fluid.NONE, state.player());
+		return state.level().clip(context).getType() == HitResult.Type.MISS;
+	}
+
 	/** Vrai si le rayon du regard (portée d'attaque) traverse la hitbox de la cible : le viseur est réellement dessus. */
 	public boolean isCrosshairOnTarget(PlayerState state, LivingEntity target) {
 		Vec3 eye = state.eyePosition();
@@ -84,7 +104,7 @@ public final class CombatController {
 			return false;
 		}
 		TargetInfo info = TargetInfo.of(state, target);
-		if (info.distance() > cfg.attackDistance || !isCrosshairOnTarget(state, target)) {
+		if (info.distance() > cfg.attackDistance || !hasLineOfSight(state, target) || !isCrosshairOnTarget(state, target)) {
 			return false; // hors portée ou viseur pas encore dans la hitbox : la rotation continue, on n'attaque pas
 		}
 		mc.gameMode.attack(state.player(), target);

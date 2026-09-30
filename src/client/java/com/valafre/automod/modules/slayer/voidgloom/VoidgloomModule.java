@@ -49,6 +49,9 @@ public final class VoidgloomModule extends AbstractModule {
 	private boolean targetIsBoss;       // false : Enderman normal farmé pour faire apparaître le boss
 	private int reactionTicks;          // délai de réaction humain avant d'agir sur une nouvelle cible
 	private int bossCheckTimer;
+	private int noLosTicks;            // ticks consécutifs sans ligne de vue sur la cible
+	private long clock;
+	private final java.util.Map<Integer, Long> skipped = new java.util.HashMap<>(); // cibles abandonnées (id -> fin d'exclusion)
 	private boolean holdPosition;       // vrai après un repositionnement tant que la mécanique existe
 
 	@Override
@@ -96,6 +99,7 @@ public final class VoidgloomModule extends AbstractModule {
 
 	private void resetState() {
 		target = null;
+		noLosTicks = 0;
 		targetIsBoss = false;
 		reactionTicks = 0;
 		bossCheckTimer = 0;
@@ -132,6 +136,7 @@ public final class VoidgloomModule extends AbstractModule {
 			}
 			return;
 		}
+		clock++;
 		fsm.tick();
 		switch (fsm.current()) {
 			case IDLE -> fsm.transition(VoidgloomState.SLAYER_CHECK);
@@ -176,15 +181,22 @@ public final class VoidgloomModule extends AbstractModule {
 		double range = cfg.farmMobs ? Math.max(cfg.targetSearchRange, cfg.farmSearchRange) : cfg.targetSearchRange;
 		// Le boss est toujours prioritaire ; sinon on farme l'Enderman normal le plus proche pour le faire apparaître.
 		EnderMan boss = f.targetSelector().select(result.bosses(), ps.position(), null, range);
-		EnderMan picked = boss != null ? boss : f.targetSelector().select(result.mobs(), ps.position(), null, range);
+		EnderMan picked = boss != null ? boss : f.targetSelector().select(reachable(result.mobs()), ps.position(), null, range);
 		if (picked != null) {
 			target = picked;
+			noLosTicks = 0;
 			targetIsBoss = boss != null;
 			reactionTicks = f.humanizer().nextReactionDelay();
 			Debug.log("Voidgloom", () -> (targetIsBoss ? "Boss trouvé : " : "Enderman à farmer : ")
 				+ f.entityInfo().resolve(ps.level(), picked));
 			fsm.transition(VoidgloomState.FOLLOWING_TARGET);
 		}
+	}
+
+	/** Retire les Enderman récemment abandonnés car inaccessibles (derrière un mur, sur une autre plateforme...). */
+	private java.util.List<EnderMan> reachable(java.util.List<EnderMan> mobs) {
+		skipped.values().removeIf(until -> until <= clock);
+		return mobs.stream().filter(m -> !skipped.containsKey(m.getId())).toList();
 	}
 
 	private void updateCounters(VoidgloomTarget.Result result) {
@@ -243,6 +255,15 @@ public final class VoidgloomModule extends AbstractModule {
 
 		// La mécanique au sol n'existe que pendant le combat contre le boss.
 		BlockPos found = targetIsBoss ? mechanics.poll(ps) : null;
+
+		// Un Enderman qu'on ne voit plus depuis trop longtemps (mur, autre plateforme) est abandonné pour un autre.
+		noLosTicks = f.combat().hasLineOfSight(ps, target) ? 0 : noLosTicks + 1;
+		if (!targetIsBoss && noLosTicks > cfg.unreachableAfterTicks) {
+			skipped.put(target.getId(), clock + cfg.skipTargetTicks);
+			Debug.log("Voidgloom", () -> "Enderman inaccessible, on en prend un autre");
+			fsm.transition(VoidgloomState.TARGET_LOST);
+			return;
+		}
 		if (found == null) {
 			handledMechanic = null;
 			if (holdPosition) { // la mécanique a disparu : on reprend le combat normal
@@ -334,7 +355,7 @@ public final class VoidgloomModule extends AbstractModule {
 
 	private void follow(Framework f) {
 		TargetInfo info = TargetInfo.of(f.player(), target);
-		if (info.distance() <= ModConfig.get().attackDistance) {
+		if (info.distance() <= ModConfig.get().attackDistance && f.combat().hasLineOfSight(f.player(), target)) {
 			fsm.transition(VoidgloomState.ALIGNING);
 			return;
 		}
@@ -346,7 +367,7 @@ public final class VoidgloomModule extends AbstractModule {
 	private void fight(Framework f) {
 		ModConfig cfg = ModConfig.get();
 		TargetInfo info = TargetInfo.of(f.player(), target);
-		if (!holdPosition && info.distance() > cfg.attackDistance + 0.5) {
+		if (!holdPosition && (info.distance() > cfg.attackDistance + 0.5 || !f.combat().hasLineOfSight(f.player(), target))) {
 			f.tasks().cancelOwner(f, ID);
 			fsm.transition(VoidgloomState.FOLLOWING_TARGET);
 			return;

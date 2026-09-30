@@ -42,7 +42,8 @@ public final class AttackTargetTask extends Task {
 		}
 		TargetInfo info = TargetInfo.of(f.player(), target);
 		f.rotation().lookAt(f.humanizer().adjustAim(target, info.aimPoint()));
-		if (endWhenOutOfRange && info.distance() > ModConfig.get().attackDistance + RANGE_HYSTERESIS) {
+		if (endWhenOutOfRange && (info.distance() > ModConfig.get().attackDistance + RANGE_HYSTERESIS
+			|| !f.combat().hasLineOfSight(f.player(), target))) {
 			return TaskStatus.SUCCEEDED;
 		}
 		// On ne s'arrête pas pour frapper : la poursuite continue pendant les attaques (sauf position imposée par une mécanique).
