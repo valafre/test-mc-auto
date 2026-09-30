@@ -52,6 +52,8 @@ public final class VoidgloomModule extends AbstractModule {
 	private boolean attackTaskHold;
 	private EnderMan attackTaskTarget;
 	private int engagedTicks = -1;    // ticks depuis le premier contact (portée + ligne de vue) ; -1 = pas encore au contact
+	private net.minecraft.world.phys.Vec3 stuckAnchor; // position de référence pour détecter un joueur bloqué
+	private int stuckTicks;
 	private int acquiredTicks;         // ticks depuis l'acquisition de la cible
 	private int noLosTicks;            // ticks consécutifs sans ligne de vue sur la cible
 	private long clock;
@@ -106,6 +108,8 @@ public final class VoidgloomModule extends AbstractModule {
 		noLosTicks = 0;
 		engagedTicks = -1;
 		acquiredTicks = 0;
+		stuckAnchor = null;
+		stuckTicks = 0;
 		targetIsBoss = false;
 		reactionTicks = 0;
 		bossCheckTimer = 0;
@@ -144,6 +148,8 @@ public final class VoidgloomModule extends AbstractModule {
 			return;
 		}
 		clock++;
+		// Survie intégrée : tourne à chaque tick, en parallèle du suivi/positionnement/combat (aucune interruption).
+		f.support().tick(f, targetIsBoss && TargetSelector.isValid(target));
 		fsm.tick();
 		switch (fsm.current()) {
 			case IDLE -> fsm.transition(VoidgloomState.SLAYER_CHECK);
@@ -194,6 +200,8 @@ public final class VoidgloomModule extends AbstractModule {
 			noLosTicks = 0;
 		engagedTicks = -1;
 		acquiredTicks = 0;
+		stuckAnchor = null;
+		stuckTicks = 0;
 			targetIsBoss = boss != null;
 			reactionTicks = f.humanizer().nextReactionDelay();
 			Debug.log("Voidgloom", () -> (targetIsBoss ? "Boss trouvé : " : "Enderman à farmer : ")
@@ -275,9 +283,18 @@ public final class VoidgloomModule extends AbstractModule {
 		} else if (TargetInfo.of(ps, target).distance() <= cfg.attackDistance && noLosTicks == 0) {
 			engagedTicks = 0;
 		}
+		// Joueur quasi immobile depuis 3 s (coincé dans un mur, sur un bord...) : on change de cible.
+		net.minecraft.world.phys.Vec3 here = ps.position();
+		if (stuckAnchor == null || here.distanceToSqr(stuckAnchor) > 0.25) {
+			stuckAnchor = here;
+			stuckTicks = 0;
+		} else {
+			stuckTicks++;
+		}
+		boolean stuck = stuckTicks > cfg.stuckSkipTicks;
 		boolean killTimeout = engagedTicks > cfg.mobKillTimeoutTicks;
 		boolean acquireTimeout = acquiredTicks > cfg.mobAcquireTimeoutTicks;
-		if (!targetIsBoss && (killTimeout || acquireTimeout || noLosTicks > cfg.unreachableAfterTicks)) {
+		if (!targetIsBoss && (killTimeout || acquireTimeout || stuck || noLosTicks > cfg.unreachableAfterTicks)) {
 			skipped.put(target.getId(), clock + cfg.skipTargetTicks);
 			Debug.log("Voidgloom", () -> "Enderman non tué à temps / inaccessible, on en prend un autre");
 			fsm.transition(VoidgloomState.TARGET_LOST);

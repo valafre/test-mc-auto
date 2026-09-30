@@ -64,7 +64,9 @@ public final class AttackTargetTask extends Task {
 		if (sneak) {
 			f.input().request(owner(), com.valafre.automod.input.InputController.Key.SNEAK, true);
 		}
-		f.combat().tryAttack(f.player(), target);
+		if (!f.items().isBusy()) { // un objet utilitaire (Wand/Orb) est en main ce tick : on n'attaque pas avec
+			f.combat().tryAttack(f.player(), target);
+		}
 		return TaskStatus.RUNNING;
 	}
 

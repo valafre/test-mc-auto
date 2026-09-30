@@ -82,6 +82,8 @@ public final class SafetyManager {
 		framework.movement().reset();
 		framework.rotation().cancel();
 		framework.combat().reset();
+		framework.items().reset();
+		framework.support().reset();
 		framework.scoreboard().clear();
 		framework.input().releaseAll(framework.minecraft());
 		framework.input().clearClaim();

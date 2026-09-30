@@ -53,6 +53,26 @@ public final class ModConfig {
 	public int voidgloomRequiredLevel = 0;
 
 	// ========================================
+	// SURVIE : WAND DE SOIN + ORB
+	// ========================================
+	public boolean healEnabled = true;
+	/** Mots présents dans le nom de l'objet (tous tiers confondus, insensible à la casse). */
+	public String healWandKeyword = "wand";
+	/** Utilise la Wand quand les PV passent sous ce pourcentage. */
+	public float healThresholdPercent = 50.0f;
+	/** Délai minimal entre deux utilisations de la Wand tant que les PV restent sous le seuil. */
+	public int wandCooldownTicks = 30;
+	public boolean orbEnabled = true;
+	public String orbKeyword = "orb";
+	/** Textes (séparés par des virgules) d'un ArmorStand qui prouve que l'Orb est posée ; à vérifier avec la touche I. */
+	public String orbStandKeywords = "orb,radiant,mana flux,overflux";
+	public double orbSearchRadius = 20.0;
+	/** Délai minimal avant de replacer l'Orb si elle n'est plus détectée. */
+	public int orbMinReplaceTicks = 100;
+	/** Repli : l'Orb est replacée après cette durée même sans détection (30 s). */
+	public int orbAssumedDurationTicks = 600;
+
+	// ========================================
 	// FARM DES ENDERMAN (pour faire apparaître le boss)
 	// ========================================
 	/** Tue les Enderman normaux tant qu'aucun Voidgloom n'est présent. */
@@ -120,6 +140,8 @@ public final class ModConfig {
 	public int mobKillTimeoutTicks = 60;
 	/** Enderman normal : abandonné si jamais atteint après X ticks (trop loin, plateforme inaccessible). */
 	public int mobAcquireTimeoutTicks = 200;
+	/** Enderman normal : abandonné si le joueur reste quasi immobile (moins de 0,5 bloc) pendant X ticks. */
+	public int stuckSkipTicks = 60;
 	/** En dessous de cette distance (oeil -> hitbox) on recule légèrement pour garder la portée. */
 	public double combatMinDistance = 1.4;
 	public int pathMaxNodes = 1500;

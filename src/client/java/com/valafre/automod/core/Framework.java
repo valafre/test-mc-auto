@@ -9,6 +9,8 @@ import com.valafre.automod.movement.PositionController;
 import com.valafre.automod.movement.RotationController;
 import com.valafre.automod.scoreboard.ScoreboardReader;
 import com.valafre.automod.scoreboard.SlayerDetector;
+import com.valafre.automod.support.ItemUseController;
+import com.valafre.automod.support.SupportManager;
 import com.valafre.automod.targeting.EntityDetector;
 import com.valafre.automod.targeting.EntityInfoResolver;
 import com.valafre.automod.targeting.TargetSelector;
@@ -28,6 +30,8 @@ public final class Framework {
 	private final TargetSelector targetSelector = new TargetSelector();
 	private final EntityDetector entityDetector = new EntityDetector();
 	private final EntityInfoResolver entityInfo = new EntityInfoResolver();
+	private final ItemUseController items;
+	private final SupportManager support = new SupportManager();
 	private final CombatController combat;
 	private final ScoreboardReader scoreboard = new ScoreboardReader();
 	private final SlayerDetector slayer = new SlayerDetector(scoreboard);
@@ -37,6 +41,7 @@ public final class Framework {
 
 	public Framework(Minecraft mc) {
 		this.mc = mc;
+		this.items = new ItemUseController(mc);
 		this.combat = new CombatController(mc);
 	}
 
@@ -50,6 +55,8 @@ public final class Framework {
 	public TargetSelector targetSelector() { return targetSelector; }
 	public EntityDetector entityDetector() { return entityDetector; }
 	public EntityInfoResolver entityInfo() { return entityInfo; }
+	public ItemUseController items() { return items; }
+	public SupportManager support() { return support; }
 	public CombatController combat() { return combat; }
 	public ScoreboardReader scoreboard() { return scoreboard; }
 	public SlayerDetector slayer() { return slayer; }

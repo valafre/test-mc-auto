@@ -31,6 +31,7 @@ public final class TickManager {
 			return;
 		}
 
+		framework.items().beginTick(state);    // rend le slot d'origine si une Wand/Orb vient d'être utilisée
 		framework.scoreboard().tick(state.level());
 		framework.combat().tick();
 		framework.modules().tick(framework);   // les modules décident et soumettent des tâches

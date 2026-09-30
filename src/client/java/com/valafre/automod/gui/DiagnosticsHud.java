@@ -35,7 +35,8 @@ public final class DiagnosticsHud {
 		String[] lines = {
 			"[AutoMod] Voidgloom : " + f.modules().status(VoidgloomModule.ID),
 			"Tâche : " + (task == null ? "aucune" : task.name()) + " | Mouvement : " + f.movement().lastStatus(),
-			"Touches : " + f.input().describeApplied() + " | Sécurité : " + f.safety().lastProblem()
+			"Touches : " + f.input().describeApplied() + " | Sécurité : " + f.safety().lastProblem(),
+			"Survie : " + f.support().status()
 		};
 		int y = mc.getWindow().getGuiScaledHeight() / 2 - 20;
 		for (String line : lines) {
