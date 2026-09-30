@@ -17,8 +17,7 @@ import java.util.function.DoubleSupplier;
 public final class AutoModScreen extends Screen {
 
 	private static final int BUTTON_H = 20;
-	private static final int ROW = 24;
-	private static final int WIDTH = 240;
+	private static final int ROW = 22;
 
 	private final Framework framework;
 
@@ -30,62 +29,63 @@ public final class AutoModScreen extends Screen {
 	@Override
 	protected void init() {
 		ModConfig cfg = ModConfig.get();
-		int x = (width - WIDTH) / 2;
-		int y = height / 2 - 130;
+		int colW = 150;
+		int gap = 6;
+		int left = (width - (2 * colW + gap)) / 2;
+		int right = left + colW + gap;
+		int top = height / 2 - 70;
 
-		// Modules
-		toggle(x, y, "Module Voidgloom", () -> isVoidgloomOn(), () -> framework.modules().toggle(framework, VoidgloomModule.ID));
+		// Colonne gauche : activation et options ON/OFF
+		int y = top;
+		toggle(left, y, colW, "Voidgloom", () -> isVoidgloomOn(), () -> framework.modules().toggle(framework, VoidgloomModule.ID));
 		y += ROW;
-
-		// Options booléennes
-		toggle(x, y, "Debug (logs)", () -> cfg.debugMode, () -> cfg.debugMode = !cfg.debugMode);
+		toggle(left, y, colW, "Exiger Slayer", () -> cfg.requireSlayer, () -> cfg.requireSlayer = !cfg.requireSlayer);
 		y += ROW;
-		toggle(x, y, "Sprint", () -> cfg.useSprint, () -> cfg.useSprint = !cfg.useSprint);
+		toggle(left, y, colW, "Debug (logs)", () -> cfg.debugMode, () -> cfg.debugMode = !cfg.debugMode);
 		y += ROW;
-		toggle(x, y, "Nom via ArmorStand", () -> cfg.allowArmorStandNameplate,
+		toggle(left, y, colW, "Sprint", () -> cfg.useSprint, () -> cfg.useSprint = !cfg.useSprint);
+		y += ROW;
+		toggle(left, y, colW, "Nom ArmorStand", () -> cfg.allowArmorStandNameplate,
 			() -> cfg.allowArmorStandNameplate = !cfg.allowArmorStandNameplate);
 		y += ROW;
-		toggle(x, y, "Position au-dessus", () -> cfg.allowAbovePosition, () -> cfg.allowAbovePosition = !cfg.allowAbovePosition);
-		y += ROW + 6;
+		toggle(left, y, colW, "Pos. au-dessus", () -> cfg.allowAbovePosition, () -> cfg.allowAbovePosition = !cfg.allowAbovePosition);
 
-		// Valeurs numériques
-		stepper(x, y, "Portée d'attaque", () -> cfg.attackDistance,
-			v -> cfg.attackDistance = Mth.clamp(v, 2.0, 6.0), 0.25);
+		// Colonne droite : valeurs numériques
+		y = top;
+		stepper(right, y, colW, "Portée", () -> cfg.attackDistance, v -> cfg.attackDistance = Mth.clamp(v, 2.0, 6.0), 0.25);
 		y += ROW;
-		stepper(x, y, "Distance d'approche", () -> cfg.approachDistance,
+		stepper(right, y, colW, "Approche", () -> cfg.approachDistance,
 			v -> cfg.approachDistance = Mth.clamp(v, 1.0, cfg.attackDistance - 0.1), 0.25);
 		y += ROW;
-		stepper(x, y, "Rayon de recherche", () -> cfg.targetSearchRange,
-			v -> cfg.targetSearchRange = Mth.clamp(v, 4.0, 48.0), 2.0);
+		stepper(right, y, colW, "Recherche", () -> cfg.targetSearchRange, v -> cfg.targetSearchRange = Mth.clamp(v, 4.0, 48.0), 2.0);
 		y += ROW;
-		stepper(x, y, "Cooldown attaque (ticks)", () -> cfg.attackCooldownTicks,
+		stepper(right, y, colW, "Cooldown", () -> cfg.attackCooldownTicks,
 			v -> cfg.attackCooldownTicks = (int) Mth.clamp(v, 1, 40), 1.0);
 		y += ROW;
-		stepper(x, y, "Niveau Voidgloom (0=ignoré)", () -> cfg.voidgloomRequiredLevel,
+		stepper(right, y, colW, "Niveau (0=off)", () -> cfg.voidgloomRequiredLevel,
 			v -> cfg.voidgloomRequiredLevel = (int) Mth.clamp(v, 0, 500), 1.0);
-		y += ROW + 6;
 
 		addRenderableWidget(Button.builder(Component.literal("Terminé"), b -> onClose())
-			.bounds(x, y, WIDTH, BUTTON_H).build());
+			.bounds(left, top + 6 * ROW + 6, 2 * colW + gap, BUTTON_H).build());
 	}
 
 	private boolean isVoidgloomOn() {
 		return framework.modules().isEnabled(VoidgloomModule.ID);
 	}
 
-	private void toggle(int x, int y, String label, BooleanSupplier state, Runnable action) {
+	private void toggle(int x, int y, int w, String label, BooleanSupplier state, Runnable action) {
 		Button real = Button.builder(Component.empty(), b -> {
 			action.run();
 			b.setMessage(Component.literal(label + " : " + (state.getAsBoolean() ? "ON" : "OFF")));
-		}).bounds(x, y, WIDTH, BUTTON_H).build();
+		}).bounds(x, y, w, BUTTON_H).build();
 		real.setMessage(Component.literal(label + " : " + (state.getAsBoolean() ? "ON" : "OFF")));
 		addRenderableWidget(real);
 	}
 
-	private void stepper(int x, int y, String label, DoubleSupplier get, DoubleConsumer set, double step) {
+	private void stepper(int x, int y, int w, String label, DoubleSupplier get, DoubleConsumer set, double step) {
 		int small = 24;
 		Button middle = Button.builder(Component.empty(), b -> { })
-			.bounds(x + small + 2, y, WIDTH - 2 * small - 4, BUTTON_H).build();
+			.bounds(x + small + 2, y, w - 2 * small - 4, BUTTON_H).build();
 		middle.active = false;
 		middle.setMessage(text(label, get.getAsDouble()));
 		addRenderableWidget(Button.builder(Component.literal("-"), b -> {
@@ -96,7 +96,7 @@ public final class AutoModScreen extends Screen {
 		addRenderableWidget(Button.builder(Component.literal("+"), b -> {
 			set.accept(get.getAsDouble() + step);
 			middle.setMessage(text(label, get.getAsDouble()));
-		}).bounds(x + WIDTH - small, y, small, BUTTON_H).build());
+		}).bounds(x + w - small, y, small, BUTTON_H).build());
 	}
 
 	private static Component text(String label, double value) {
@@ -106,7 +106,9 @@ public final class AutoModScreen extends Screen {
 	@Override
 	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
 		super.extractRenderState(graphics, mouseX, mouseY, delta);
-		graphics.text(font, title, (width - font.width(title)) / 2, height / 2 - 150, 0xFFFFFFFF);
+		graphics.text(font, title, (width - font.width(title)) / 2, height / 2 - 100, 0xFFFFFFFF);
+		Component status = Component.literal("Voidgloom : " + framework.modules().status(VoidgloomModule.ID));
+		graphics.text(font, status, (width - font.width(status)) / 2, height / 2 - 86, 0xFFAAAAAA);
 	}
 
 	@Override

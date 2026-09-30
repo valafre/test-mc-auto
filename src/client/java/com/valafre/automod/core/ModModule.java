@@ -17,6 +17,11 @@ public interface ModModule {
 	/** Appelé chaque tick tant que le module est actif et que les conditions de sécurité sont réunies. */
 	void onTick(Framework framework);
 
+	/** Texte d'état affiché dans le menu. */
+	default String status() {
+		return "";
+	}
+
 	/** Arrêt d'urgence / changement de monde : revenir à un état propre sans désactiver le module. */
 	void onSafetyStop(Framework framework);
 }

@@ -99,6 +99,8 @@ public final class ModConfig {
 	// ========================================
 	// SCOREBOARD / SLAYER
 	// ========================================
+	/** false : le module ne vérifie plus le scoreboard et agit dès qu'il est activé. */
+	public boolean requireSlayer = true;
 	public String slayerScoreboardKeyword = "slayer";
 	public int scoreboardRefreshTicks = 10;
 

@@ -42,11 +42,20 @@ public final class VoidgloomModule extends AbstractModule {
 	private BlockPos handledMechanic;   // déjà traitée : ne pas redéclencher tant qu'elle est présente
 	private MoveToPositionTask moveTask;
 	private int repositionAttempts;
+	private boolean slayerOk;
 	private boolean holdPosition;       // vrai après un repositionnement tant que la mécanique existe
 
 	@Override
 	public String id() {
 		return ID;
+	}
+
+	@Override
+	public String status() {
+		if (!slayerOk) {
+			return "en attente : \"" + ModConfig.get().slayerScoreboardKeyword + "\" absent du scoreboard";
+		}
+		return fsm.current() + (target != null ? " (cible ok)" : " (aucun Voidgloom à portée)");
 	}
 
 	@Override
@@ -103,7 +112,8 @@ public final class VoidgloomModule extends AbstractModule {
 	@Override
 	public void onTick(Framework f) {
 		// Performance : tant que Slayer n'est pas actif, aucune recherche d'entité ni de bloc n'est faite.
-		if (!f.slayer().isActive()) {
+		slayerOk = !ModConfig.get().requireSlayer || f.slayer().isActive();
+		if (!slayerOk) {
 			if (!fsm.is(VoidgloomState.IDLE)) {
 				fsm.transition(VoidgloomState.STOPPING);
 				stopActions(f);

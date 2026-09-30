@@ -33,6 +33,15 @@ public final class ModuleManager {
 		return false;
 	}
 
+	public String status(String id) {
+		for (AbstractModule module : modules) {
+			if (module.id().equals(id)) {
+				return module.isEnabled() ? module.status() : "désactivé";
+			}
+		}
+		return "";
+	}
+
 	public void tick(Framework framework) {
 		for (AbstractModule module : modules) {
 			if (module.isEnabled()) {
