@@ -112,6 +112,10 @@ public final class ModConfig {
 	// MOUVEMENT / PATHFINDING
 	// ========================================
 	public boolean useSprint = true;
+	/** Pendant le combat, le joueur bouge en continu (strafe autour de la cible) au lieu de s'arrêter pour frapper. */
+	public boolean strafeInCombat = true;
+	/** En dessous de cette distance (oeil -> hitbox) on recule légèrement pour garder la portée. */
+	public double combatMinDistance = 1.4;
 	public int pathMaxNodes = 1500;
 	public int pathRecomputeIntervalTicks = 10;
 	/** Durée maximale d'un déplacement vers une position avant abandon. */

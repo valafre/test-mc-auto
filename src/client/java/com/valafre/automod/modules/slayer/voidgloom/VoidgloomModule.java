@@ -12,7 +12,6 @@ import com.valafre.automod.movement.PositionController;
 import com.valafre.automod.targeting.TargetInfo;
 import com.valafre.automod.targeting.TargetSelector;
 import com.valafre.automod.task.AttackTargetTask;
-import com.valafre.automod.task.FollowTargetTask;
 import com.valafre.automod.task.MoveToPositionTask;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.monster.EnderMan;
@@ -49,6 +48,9 @@ public final class VoidgloomModule extends AbstractModule {
 	private boolean targetIsBoss;       // false : Enderman normal farmé pour faire apparaître le boss
 	private int reactionTicks;          // délai de réaction humain avant d'agir sur une nouvelle cible
 	private int bossCheckTimer;
+	private AttackTargetTask attackTask;
+	private boolean attackTaskHold;
+	private EnderMan attackTaskTarget;
 	private int noLosTicks;            // ticks consécutifs sans ligne de vue sur la cible
 	private long clock;
 	private final java.util.Map<Integer, Long> skipped = new java.util.HashMap<>(); // cibles abandonnées (id -> fin d'exclusion)
@@ -115,6 +117,7 @@ public final class VoidgloomModule extends AbstractModule {
 	}
 
 	private void stopActions(Framework f) {
+		attackTask = null;
 		f.tasks().cancelOwner(f, ID);
 		f.movement().reset();
 		f.rotation().cancel();
@@ -282,7 +285,6 @@ public final class VoidgloomModule extends AbstractModule {
 		}
 
 		switch (fsm.current()) {
-			case FOLLOWING_TARGET -> follow(f);
 			case GROUND_MECHANIC_DETECTED -> fsm.transition(VoidgloomState.CHOOSING_POSITION);
 			case CHOOSING_POSITION -> choosePosition(f);
 			case REPOSITIONING -> reposition(f);
@@ -291,7 +293,7 @@ public final class VoidgloomModule extends AbstractModule {
 				f.tasks().cancelOwner(f, ID);
 				fsm.transition(VoidgloomState.ALIGNING);
 			}
-			case ALIGNING, ATTACKING -> fight(f);
+			case FOLLOWING_TARGET, ALIGNING, ATTACKING -> engage(f);
 			default -> { }
 		}
 	}
@@ -353,29 +355,24 @@ public final class VoidgloomModule extends AbstractModule {
 	// COMBAT
 	// ========================================
 
-	private void follow(Framework f) {
-		TargetInfo info = TargetInfo.of(f.player(), target);
-		if (info.distance() <= ModConfig.get().attackDistance && f.combat().hasLineOfSight(f.player(), target)) {
-			fsm.transition(VoidgloomState.ALIGNING);
-			return;
-		}
-		if (!f.tasks().isRunning(FollowTargetTask.class)) {
-			f.tasks().submit(f, ID, new FollowTargetTask(TaskPriority.FOLLOW, target));
-		}
-	}
-
-	private void fight(Framework f) {
+	/**
+	 * Une seule tâche de combat continue (poursuite + strafe + attaque). Les états FOLLOWING / ALIGNING / ATTACKING ne
+	 * sont que le reflet de la situation (affichage et décisions), ils ne changent plus de tâche : pas de pause entre deux coups.
+	 */
+	private void engage(Framework f) {
 		ModConfig cfg = ModConfig.get();
-		TargetInfo info = TargetInfo.of(f.player(), target);
-		if (!holdPosition && (info.distance() > cfg.attackDistance + 0.5 || !f.combat().hasLineOfSight(f.player(), target))) {
-			f.tasks().cancelOwner(f, ID);
-			fsm.transition(VoidgloomState.FOLLOWING_TARGET);
-			return;
+		PlayerState ps = f.player();
+		boolean wantHold = holdPosition;
+		if (attackTask == null || attackTaskHold != wantHold || attackTaskTarget != target
+			|| !f.tasks().isRunning(AttackTargetTask.class)) {
+			attackTask = new AttackTargetTask(TaskPriority.COMBAT, target, wantHold);
+			attackTaskHold = wantHold;
+			attackTaskTarget = target;
+			f.tasks().submit(f, ID, attackTask);
 		}
-		if (!f.tasks().isRunning(AttackTargetTask.class)) {
-			f.tasks().submit(f, ID, new AttackTargetTask(TaskPriority.COMBAT, target, !holdPosition));
-		}
-		boolean ready = info.distance() <= cfg.attackDistance && f.combat().isAligned(f.player(), target);
-		fsm.transition(ready ? VoidgloomState.ATTACKING : VoidgloomState.ALIGNING);
+		TargetInfo info = TargetInfo.of(ps, target);
+		boolean inRange = info.distance() <= cfg.attackDistance && f.combat().hasLineOfSight(ps, target);
+		boolean ready = inRange && f.combat().isAligned(ps, target);
+		fsm.transition(ready ? VoidgloomState.ATTACKING : inRange ? VoidgloomState.ALIGNING : VoidgloomState.FOLLOWING_TARGET);
 	}
 }

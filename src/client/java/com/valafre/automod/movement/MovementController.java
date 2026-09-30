@@ -131,6 +131,52 @@ public final class MovementController {
 	}
 
 	// ========================================
+	// COMBAT
+	// ========================================
+
+	private boolean combatForward;
+	private boolean combatBack;
+
+	/**
+	 * Mouvement continu pendant le combat : strafe (gauche/droite) autour de la cible + avancer/reculer pour garder la
+	 * distance entre {@code keepMin} et {@code keepMax}. Le regard est géré par l'appelant (il reste sur la cible).
+	 *
+	 * @param strafeDir +1 = droite, -1 = gauche
+	 * @return false si le côté choisi est impraticable (mur, vide) : l'appelant doit inverser le sens
+	 */
+	public boolean combatMove(PlayerState state, String owner, double distance, double keepMin, double keepMax, int strafeDir) {
+		// Vecteur "droite" du joueur ; on vérifie qu'on ne va pas strafer dans un mur ou dans le vide.
+		double yawRad = Math.toRadians(state.yaw());
+		double rx = -Math.cos(yawRad);
+		double rz = -Math.sin(yawRad);
+		Vec3 pos = state.position();
+		BlockPos probe = BlockPos.containing(pos.x + rx * strafeDir * 0.9, pos.y + 0.05, pos.z + rz * strafeDir * 0.9);
+		boolean sideOk = Walkability.canStandAt(state.level(), probe) || Walkability.canStandAt(state.level(), probe.below());
+
+		combatForward = distance > keepMax + (combatForward ? -0.3 : 0.0);
+		combatBack = distance < keepMin + (combatBack ? 0.3 : 0.0);
+		if (combatForward && combatBack) {
+			combatBack = false;
+		}
+		if (sideOk) {
+			input.request(owner, strafeDir > 0 ? Key.RIGHT : Key.LEFT, true);
+		}
+		input.request(owner, Key.FORWARD, combatForward);
+		input.request(owner, Key.BACK, combatBack);
+
+		if (jumpCooldown > 0) {
+			jumpCooldown--;
+		}
+		boolean jump = state.onGround() && jumpCooldown == 0 && state.player().horizontalCollision;
+		if (jump) {
+			jumpCooldown = JUMP_COOLDOWN_TICKS;
+		}
+		input.request(owner, Key.JUMP, jump);
+		lastStatus = "COMBAT (strafe " + (strafeDir > 0 ? "droite" : "gauche") + ")";
+		return sideOk;
+	}
+
+	// ========================================
 	// WAYPOINT / CHEMIN
 	// ========================================
 
