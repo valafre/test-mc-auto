@@ -2,6 +2,7 @@ package com.valafre.automod;
 
 import com.valafre.automod.config.ModConfig;
 import com.valafre.automod.core.Framework;
+import com.valafre.automod.core.InspectTool;
 import com.valafre.automod.core.TickManager;
 import com.valafre.automod.modules.slayer.voidgloom.VoidgloomModule;
 import net.fabricmc.api.ClientModInitializer;
@@ -19,6 +20,7 @@ public class AutoModClient implements ClientModInitializer {
 	private Framework framework;
 	private KeyMapping toggleVoidgloomKey;
 	private KeyMapping panicKey;
+	private KeyMapping inspectKey;
 
 	@Override
 	public void onInitializeClient() {
@@ -32,6 +34,9 @@ public class AutoModClient implements ClientModInitializer {
 		panicKey = KeyMappingHelper.registerKeyMapping(
 			new KeyMapping("key.automod.panic", GLFW.GLFW_KEY_END, category));
 
+		inspectKey = KeyMappingHelper.registerKeyMapping(
+			new KeyMapping("key.automod.inspect", GLFW.GLFW_KEY_I, category));
+
 		new TickManager(framework).register();
 		ClientTickEvents.END_CLIENT_TICK.register(this::handleKeys);
 	}
@@ -39,6 +44,9 @@ public class AutoModClient implements ClientModInitializer {
 	private void handleKeys(Minecraft mc) {
 		while (panicKey.consumeClick()) {
 			framework.safety().panic();
+		}
+		while (inspectKey.consumeClick()) {
+			InspectTool.inspect(mc);
 		}
 		while (toggleVoidgloomKey.consumeClick()) {
 			boolean enabled = framework.modules().toggle(framework, VoidgloomModule.ID);
