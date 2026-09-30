@@ -42,6 +42,15 @@ public final class ModuleManager {
 		return "";
 	}
 
+	public String shortStatus(String id) {
+		for (AbstractModule module : modules) {
+			if (module.id().equals(id)) {
+				return module.isEnabled() ? module.shortStatus() : "OFF";
+			}
+		}
+		return "";
+	}
+
 	public void tick(Framework framework) {
 		for (AbstractModule module : modules) {
 			if (module.isEnabled()) {

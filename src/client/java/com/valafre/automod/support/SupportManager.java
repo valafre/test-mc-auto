@@ -25,6 +25,7 @@ public final class SupportManager {
 	private int orbScanTimer;
 	private boolean orbSeen;
 	private String status = "-";
+	private String shortStatus = "-";
 
 	// ========================================
 	// SURVIE
@@ -64,10 +65,15 @@ public final class SupportManager {
 			maintainOrb(f, cfg, ps, items);
 		}
 
+		updateShortStatus(fraction, bossFight);
 		status = "PV " + Math.round(fraction * 100) + "% (seuil " + Math.round(cfg.healThresholdPercent) + "%)"
 			+ " | Wand: " + slotText(items.findHotbarSlot(ps, cfg.healWandKeyword))
 			+ " | Orb: " + (!bossFight ? "inactive (hors boss)" : orbTicks < 0 ? "à poser"
 			: "posée il y a " + orbTicks / 20 + " s" + (orbSeen ? " (détectée)" : " (non détectée)"));
+	}
+
+	private void updateShortStatus(float fraction, boolean bossFight) {
+		shortStatus = "PV " + Math.round(fraction * 100) + "%" + (!bossFight ? "" : orbTicks < 0 ? " · Orb ..." : " · Orb OK");
 	}
 
 	private void maintainOrb(Framework f, ModConfig cfg, PlayerState ps, ItemUseController items) {
@@ -120,6 +126,10 @@ public final class SupportManager {
 
 	public String status() {
 		return status;
+	}
+
+	public String shortStatus() {
+		return shortStatus;
 	}
 
 	private static String slotText(int slot) {

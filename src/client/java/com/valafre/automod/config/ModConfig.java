@@ -30,6 +30,8 @@ public final class ModConfig {
 	// GÉNÉRAL
 	// ========================================
 	public boolean debugMode = false;
+	/** Affichage en jeu : une ligne courte ; le détail (tâche, touches, survie) n'apparaît qu'en mode debug. */
+	public boolean hudEnabled = true;
 
 	// ========================================
 	// TARGETING
@@ -55,6 +57,8 @@ public final class ModConfig {
 	// ========================================
 	// SURVIE : WAND DE SOIN + ORB
 	// ========================================
+	/** Arme équipée automatiquement pendant le combat : premier objet de la hotbar dont le nom contient ce mot (vide = désactivé). */
+	public String weaponKeyword = "katana";
 	public boolean healEnabled = true;
 	/** Mots présents dans le nom de l'objet (tous tiers confondus, insensible à la casse). */
 	public String healWandKeyword = "wand";

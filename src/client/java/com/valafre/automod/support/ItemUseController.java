@@ -54,6 +54,24 @@ public final class ItemUseController {
 		return true;
 	}
 
+	private int equipTimer;
+
+	/**
+	 * Garde l'arme (premier objet de la hotbar dont le nom contient {@code keyword}) en main. Vérifié toutes les 5 ticks
+	 * seulement ; ne fait rien pendant une utilisation de Wand/Orb ni juste après (le slot d'origine est alors rendu).
+	 */
+	public void equip(PlayerState state, String keyword) {
+		if (keyword == null || keyword.isBlank() || busy || restoreSlot >= 0 || equipTimer-- > 0) {
+			return;
+		}
+		equipTimer = 4;
+		int slot = findHotbarSlot(state, keyword);
+		Inventory inventory = state.player().getInventory();
+		if (slot >= 0 && inventory.getSelectedSlot() != slot) {
+			inventory.setSelectedSlot(slot);
+		}
+	}
+
 	/** Vrai pendant le tick où un objet utilitaire est en main : le combat ne doit pas attaquer ce tick-là. */
 	public boolean isBusy() {
 		return busy;

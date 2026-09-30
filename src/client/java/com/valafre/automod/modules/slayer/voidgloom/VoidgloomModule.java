@@ -78,6 +78,14 @@ public final class VoidgloomModule extends AbstractModule {
 	}
 
 	@Override
+	public String shortStatus() {
+		if (!slayerOk) {
+			return "attente Slayer";
+		}
+		return fsm.current() + (target == null ? "" : targetIsBoss ? " · boss" : " · mob");
+	}
+
+	@Override
 	public int getPriority() {
 		return MODULE_PRIORITY;
 	}

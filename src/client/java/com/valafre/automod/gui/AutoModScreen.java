@@ -45,7 +45,7 @@ public final class AutoModScreen extends Screen {
 		y += ROW;
 		toggle(left, y, colW, "Humaniser", () -> cfg.humanize, () -> cfg.humanize = !cfg.humanize);
 		y += ROW;
-		toggle(left, y, colW, "Debug (logs)", () -> cfg.debugMode, () -> cfg.debugMode = !cfg.debugMode);
+		toggle(left, y, colW, "Debug (HUD détaillé)", () -> cfg.debugMode, () -> cfg.debugMode = !cfg.debugMode);
 		y += ROW;
 		toggle(left, y, colW, "Seulement mon boss", () -> cfg.onlyOwnBoss, () -> cfg.onlyOwnBoss = !cfg.onlyOwnBoss);
 		y += ROW;

@@ -22,6 +22,11 @@ public interface ModModule {
 		return "";
 	}
 
+	/** Statut très court pour l'affichage compact. */
+	default String shortStatus() {
+		return status();
+	}
+
 	/** Arrêt d'urgence / changement de monde : revenir à un état propre sans désactiver le module. */
 	void onSafetyStop(Framework framework);
 }

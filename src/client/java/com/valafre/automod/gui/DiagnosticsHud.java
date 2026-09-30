@@ -30,14 +30,26 @@ public final class DiagnosticsHud {
 		if (!f.modules().isEnabled(VoidgloomModule.ID)) {
 			return;
 		}
+		if (!com.valafre.automod.config.ModConfig.get().hudEnabled) {
+			return;
+		}
 		Minecraft mc = f.minecraft();
-		Task task = f.tasks().current();
-		String[] lines = {
-			"[AutoMod] Voidgloom : " + f.modules().status(VoidgloomModule.ID),
-			"Tâche : " + (task == null ? "aucune" : task.name()) + " | Mouvement : " + f.movement().lastStatus(),
-			"Touches : " + f.input().describeApplied() + " | Sécurité : " + f.safety().lastProblem(),
-			"Survie : " + f.support().status()
-		};
+		String[] lines;
+		if (com.valafre.automod.core.Debug.enabled()) {
+			// Mode debug : détail complet.
+			Task task = f.tasks().current();
+			lines = new String[] {
+				"[AutoMod] Voidgloom : " + f.modules().status(VoidgloomModule.ID),
+				"Tâche : " + (task == null ? "aucune" : task.name()) + " | Mouvement : " + f.movement().lastStatus(),
+				"Touches : " + f.input().describeApplied() + " | Sécurité : " + f.safety().lastProblem(),
+				"Survie : " + f.support().status()
+			};
+		} else {
+			// Mode normal : une seule ligne courte.
+			lines = new String[] {
+				"[AutoMod] " + f.modules().shortStatus(VoidgloomModule.ID) + " | " + f.support().shortStatus()
+			};
+		}
 		int y = mc.getWindow().getGuiScaledHeight() / 2 - 20;
 		for (String line : lines) {
 			graphics.text(mc.font, line, 4, y, 0xFFFFFF55);
