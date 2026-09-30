@@ -47,17 +47,12 @@ public final class AutoModScreen extends Screen {
 		y += ROW;
 		toggle(left, y, colW, "Debug (logs)", () -> cfg.debugMode, () -> cfg.debugMode = !cfg.debugMode);
 		y += ROW;
-		toggle(left, y, colW, "Sprint", () -> cfg.useSprint, () -> cfg.useSprint = !cfg.useSprint);
+		toggle(left, y, colW, "Seulement mon boss", () -> cfg.onlyOwnBoss, () -> cfg.onlyOwnBoss = !cfg.onlyOwnBoss);
 		y += ROW;
-		toggle(left, y, colW, "Nom ArmorStand", () -> cfg.allowArmorStandNameplate,
-			() -> cfg.allowArmorStandNameplate = !cfg.allowArmorStandNameplate);
+		toggle(left, y, colW, "Pos. au-dessus", () -> cfg.allowAbovePosition, () -> cfg.allowAbovePosition = !cfg.allowAbovePosition);
 
 		// Colonne droite : position + valeurs numériques
 		y = top;
-		toggle(right, y, colW, "Pos. au-dessus", () -> cfg.allowAbovePosition, () -> cfg.allowAbovePosition = !cfg.allowAbovePosition);
-		y += ROW;
-		toggle(right, y, colW, "Seulement mon boss", () -> cfg.onlyOwnBoss, () -> cfg.onlyOwnBoss = !cfg.onlyOwnBoss);
-		y += ROW;
 		stepper(right, y, colW, "Portée", () -> cfg.attackDistance, v -> cfg.attackDistance = Mth.clamp(v, 2.0, 6.0), 0.25);
 		y += ROW;
 		stepper(right, y, colW, "Approche", () -> cfg.approachDistance,
@@ -65,8 +60,11 @@ public final class AutoModScreen extends Screen {
 		y += ROW;
 		stepper(right, y, colW, "Recherche", () -> cfg.targetSearchRange, v -> cfg.targetSearchRange = Mth.clamp(v, 4.0, 48.0), 2.0);
 		y += ROW;
-		stepper(right, y, colW, "Cooldown", () -> cfg.attackCooldownTicks,
-			v -> cfg.attackCooldownTicks = (int) Mth.clamp(v, 1, 40), 1.0);
+		stepper(right, y, colW, "CPS min", () -> cfg.minCps,
+			v -> { cfg.minCps = Mth.clamp(v, 1.0, 20.0); cfg.maxCps = Math.max(cfg.maxCps, cfg.minCps); }, 1.0);
+		y += ROW;
+		stepper(right, y, colW, "CPS max", () -> cfg.maxCps,
+			v -> { cfg.maxCps = Mth.clamp(v, 1.0, 20.0); cfg.minCps = Math.min(cfg.minCps, cfg.maxCps); }, 1.0);
 		y += ROW;
 		stepper(right, y, colW, "Niveau (0=off)", () -> cfg.voidgloomRequiredLevel,
 			v -> cfg.voidgloomRequiredLevel = (int) Mth.clamp(v, 0, 500), 1.0);

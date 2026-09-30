@@ -85,10 +85,4 @@ public final class Humanizer {
 		int max = Math.max(min, cfg.reactionDelayMaxTicks);
 		return min + rng.nextInt(max - min + 1);
 	}
-
-	/** Ticks ajoutés au cooldown de la prochaine attaque. */
-	public int attackJitter() {
-		ModConfig cfg = ModConfig.get();
-		return cfg.humanize ? rng.nextInt(Math.max(0, cfg.attackJitterTicks) + 1) : 0;
-	}
 }

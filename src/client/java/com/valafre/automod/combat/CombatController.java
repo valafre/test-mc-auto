@@ -19,7 +19,9 @@ public final class CombatController {
 	private final Minecraft mc;
 	private final RotationController rotation;
 	private final Humanizer humanizer;
-	private int extraCooldown;
+	private final java.util.Random rng = new java.util.Random();
+	private int nextInterval = 1;   // ticks à attendre avant le prochain coup
+	private double tickDebt;        // reste fractionnaire reporté : garantit le CPS moyen visé
 	private int ticksSinceAttack = Integer.MAX_VALUE / 2;
 
 	public CombatController(Minecraft mc, RotationController rotation, Humanizer humanizer) {
@@ -37,12 +39,24 @@ public final class CombatController {
 
 	public void reset() {
 		ticksSinceAttack = Integer.MAX_VALUE / 2;
-		extraCooldown = 0;
+		nextInterval = 1;
+		tickDebt = 0;
 	}
 
 	// ========================================
 	// COMBAT
 	// ========================================
+
+	/** Tire un CPS entre min et max ; 20/CPS ticks séparent les coups, la partie fractionnaire est reportée au coup suivant. */
+	private void scheduleNextAttack(ModConfig cfg) {
+		double min = Math.max(1.0, Math.min(cfg.minCps, cfg.maxCps));
+		double max = Math.min(20.0, Math.max(cfg.minCps, cfg.maxCps));
+		double cps = min + rng.nextDouble() * (max - min);
+		tickDebt += 20.0 / cps;
+		int interval = (int) tickDebt;
+		tickDebt -= interval;
+		nextInterval = Math.max(1, interval);
+	}
 
 	public boolean isInRange(PlayerState state, LivingEntity target) {
 		return TargetInfo.of(state, target).distance() <= ModConfig.get().attackDistance;
@@ -61,7 +75,7 @@ public final class CombatController {
 		if (target == null || !target.isAlive() || target.isRemoved()) {
 			return false;
 		}
-		if (ticksSinceAttack < cfg.attackCooldownTicks + extraCooldown
+		if (ticksSinceAttack < nextInterval
 			|| state.player().getAttackStrengthScale(0.0f) < cfg.minAttackStrength) {
 			return false;
 		}
@@ -72,7 +86,7 @@ public final class CombatController {
 		mc.gameMode.attack(state.player(), target);
 		state.player().swing(InteractionHand.MAIN_HAND);
 		ticksSinceAttack = 0;
-		extraCooldown = humanizer.attackJitter(); // cadence légèrement irrégulière
+		scheduleNextAttack(cfg);
 		Debug.log("Combat", () -> "Attaque (distance=" + String.format("%.2f", info.distance()) + ")");
 		return true;
 	}

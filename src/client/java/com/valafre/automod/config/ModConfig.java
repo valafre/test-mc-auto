@@ -64,7 +64,6 @@ public final class ModConfig {
 	public float rotationSpeedVariation = 0.2f;
 	public int reactionDelayMinTicks = 4;
 	public int reactionDelayMaxTicks = 14;
-	public int attackJitterTicks = 3;
 
 	// ========================================
 	// DISTANCES
@@ -93,9 +92,11 @@ public final class ModConfig {
 	// ========================================
 	// COMBAT
 	// ========================================
-	public int attackCooldownTicks = 10;
-	/** Force d'attaque vanilla minimale (0..1) avant de frapper. */
-	public float minAttackStrength = 0.9f;
+	/** Cadence d'attaque : un CPS est tiré entre min et max à chaque coup (moyenne respectée au tick près). */
+	public double minCps = 10.0;
+	public double maxCps = 13.0;
+	/** Force d'attaque vanilla minimale (0..1) avant de frapper ; 0 = désactivé (nécessaire pour 10+ CPS). */
+	public float minAttackStrength = 0.0f;
 
 	// ========================================
 	// MOUVEMENT / PATHFINDING
