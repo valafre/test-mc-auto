@@ -1,0 +1,19 @@
+{
+	"schemaVersion": 1,
+	"id": "automod",
+	"version": "${version}",
+	"name": "AutoMod Framework",
+	"description": "Framework client d'assistance/automatisation modulaire (premier module : Voidgloom).",
+	"authors": ["valafre"],
+	"license": "MIT",
+	"environment": "client",
+	"entrypoints": {
+		"client": ["com.valafre.automod.AutoModClient"]
+	},
+	"depends": {
+		"fabricloader": ">=0.19.3",
+		"minecraft": "~26.1.2",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}
