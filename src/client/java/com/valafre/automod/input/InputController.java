@@ -15,7 +15,7 @@ import net.minecraft.client.Options;
  */
 public final class InputController {
 
-	public enum Key { FORWARD, BACK, LEFT, RIGHT, JUMP, SPRINT }
+	public enum Key { FORWARD, BACK, LEFT, RIGHT, JUMP, SPRINT, SNEAK }
 
 	private static final int KEY_COUNT = Key.values().length;
 
@@ -84,6 +84,13 @@ public final class InputController {
 	/** Applique les intentions aux vraies touches, uniquement quand l'état change (pas de setDown redondant). */
 	public void endTick(Minecraft mc) {
 		Options options = mc.options;
+		// Accroupi : pas de sprint possible ; et en mode "sneak en bascule" un setDown(true/false) inverserait l'état, on s'abstient.
+		if (intent[Key.SNEAK.ordinal()]) {
+			intent[Key.SPRINT.ordinal()] = false;
+			if (options.toggleCrouch().get()) {
+				intent[Key.SNEAK.ordinal()] = false;
+			}
+		}
 		for (Key key : Key.values()) {
 			int i = key.ordinal();
 			if (intent[i] != applied[i]) {
@@ -110,6 +117,7 @@ public final class InputController {
 			case RIGHT -> options.keyRight;
 			case JUMP -> options.keyJump;
 			case SPRINT -> options.keySprint;
+			case SNEAK -> options.keyShift;
 		};
 	}
 }

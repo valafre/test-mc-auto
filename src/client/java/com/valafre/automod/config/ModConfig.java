@@ -114,6 +114,12 @@ public final class ModConfig {
 	public boolean useSprint = true;
 	/** Pendant le combat, le joueur bouge en continu (strafe autour de la cible) au lieu de s'arrêter pour frapper. */
 	public boolean strafeInCombat = true;
+	/** Sneak (accroupi) pendant le combat contre le boss. Ignoré si l'option vanilla "sneak en bascule" est active. */
+	public boolean sneakOnBoss = true;
+	/** Enderman normal : abandonné si toujours en vie X ticks après le premier contact (portée + ligne de vue). Jamais pour le boss. */
+	public int mobKillTimeoutTicks = 60;
+	/** Enderman normal : abandonné si jamais atteint après X ticks (trop loin, plateforme inaccessible). */
+	public int mobAcquireTimeoutTicks = 200;
 	/** En dessous de cette distance (oeil -> hitbox) on recule légèrement pour garder la portée. */
 	public double combatMinDistance = 1.4;
 	public int pathMaxNodes = 1500;

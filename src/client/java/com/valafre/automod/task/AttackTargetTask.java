@@ -22,16 +22,19 @@ public final class AttackTargetTask extends Task {
 
 	private final LivingEntity target;
 	private final boolean holdPosition;
+	private final boolean sneak;
 	private final Chase chase = new Chase();
 	private final Random rng = new Random();
 	private int strafeDir = 1;
 	private int switchIn;
 
-	/** @param holdPosition true : le joueur garde sa position (imposée par une mécanique), vise et frappe sans bouger */
-	public AttackTargetTask(int priority, LivingEntity target, boolean holdPosition) {
+	/** @param sneak true : reste accroupi pendant toute la tâche (combat contre le boss)
+	 *  @param holdPosition true : le joueur garde sa position (imposée par une mécanique), vise et frappe sans bouger */
+	public AttackTargetTask(int priority, LivingEntity target, boolean holdPosition, boolean sneak) {
 		super(priority);
 		this.target = target;
 		this.holdPosition = holdPosition;
+		this.sneak = sneak;
 		this.strafeDir = rng.nextBoolean() ? 1 : -1;
 	}
 
@@ -57,6 +60,9 @@ public final class AttackTargetTask extends Task {
 			} else {
 				chase.step(f, owner(), target, info); // trop loin ou sans ligne de vue : on rejoint / contourne
 			}
+		}
+		if (sneak) {
+			f.input().request(owner(), com.valafre.automod.input.InputController.Key.SNEAK, true);
 		}
 		f.combat().tryAttack(f.player(), target);
 		return TaskStatus.RUNNING;

@@ -51,8 +51,10 @@ public final class AutoModScreen extends Screen {
 		y += ROW;
 		toggle(left, y, colW, "Pos. au-dessus", () -> cfg.allowAbovePosition, () -> cfg.allowAbovePosition = !cfg.allowAbovePosition);
 
-		// Colonne droite : position + valeurs numériques
+		// Colonne droite : sneak + valeurs numériques
 		y = top;
+		toggle(right, y, colW, "Sneak sur boss", () -> cfg.sneakOnBoss, () -> cfg.sneakOnBoss = !cfg.sneakOnBoss);
+		y += ROW;
 		stepper(right, y, colW, "Portée", () -> cfg.attackDistance, v -> cfg.attackDistance = Mth.clamp(v, 2.0, 6.0), 0.25);
 		y += ROW;
 		stepper(right, y, colW, "Approche", () -> cfg.approachDistance,

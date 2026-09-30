@@ -51,6 +51,8 @@ public final class VoidgloomModule extends AbstractModule {
 	private AttackTargetTask attackTask;
 	private boolean attackTaskHold;
 	private EnderMan attackTaskTarget;
+	private int engagedTicks = -1;    // ticks depuis le premier contact (portée + ligne de vue) ; -1 = pas encore au contact
+	private int acquiredTicks;         // ticks depuis l'acquisition de la cible
 	private int noLosTicks;            // ticks consécutifs sans ligne de vue sur la cible
 	private long clock;
 	private final java.util.Map<Integer, Long> skipped = new java.util.HashMap<>(); // cibles abandonnées (id -> fin d'exclusion)
@@ -102,6 +104,8 @@ public final class VoidgloomModule extends AbstractModule {
 	private void resetState() {
 		target = null;
 		noLosTicks = 0;
+		engagedTicks = -1;
+		acquiredTicks = 0;
 		targetIsBoss = false;
 		reactionTicks = 0;
 		bossCheckTimer = 0;
@@ -188,6 +192,8 @@ public final class VoidgloomModule extends AbstractModule {
 		if (picked != null) {
 			target = picked;
 			noLosTicks = 0;
+		engagedTicks = -1;
+		acquiredTicks = 0;
 			targetIsBoss = boss != null;
 			reactionTicks = f.humanizer().nextReactionDelay();
 			Debug.log("Voidgloom", () -> (targetIsBoss ? "Boss trouvé : " : "Enderman à farmer : ")
@@ -261,9 +267,19 @@ public final class VoidgloomModule extends AbstractModule {
 
 		// Un Enderman qu'on ne voit plus depuis trop longtemps (mur, autre plateforme) est abandonné pour un autre.
 		noLosTicks = f.combat().hasLineOfSight(ps, target) ? 0 : noLosTicks + 1;
-		if (!targetIsBoss && noLosTicks > cfg.unreachableAfterTicks) {
+		// Enderman normal : 3 s après le premier contact sans l'avoir tué (ou jamais atteint), on en prend un autre.
+		// Le boss, lui, n'est JAMAIS abandonné.
+		acquiredTicks++;
+		if (engagedTicks >= 0) {
+			engagedTicks++;
+		} else if (TargetInfo.of(ps, target).distance() <= cfg.attackDistance && noLosTicks == 0) {
+			engagedTicks = 0;
+		}
+		boolean killTimeout = engagedTicks > cfg.mobKillTimeoutTicks;
+		boolean acquireTimeout = acquiredTicks > cfg.mobAcquireTimeoutTicks;
+		if (!targetIsBoss && (killTimeout || acquireTimeout || noLosTicks > cfg.unreachableAfterTicks)) {
 			skipped.put(target.getId(), clock + cfg.skipTargetTicks);
-			Debug.log("Voidgloom", () -> "Enderman inaccessible, on en prend un autre");
+			Debug.log("Voidgloom", () -> "Enderman non tué à temps / inaccessible, on en prend un autre");
 			fsm.transition(VoidgloomState.TARGET_LOST);
 			return;
 		}
@@ -365,7 +381,7 @@ public final class VoidgloomModule extends AbstractModule {
 		boolean wantHold = holdPosition;
 		if (attackTask == null || attackTaskHold != wantHold || attackTaskTarget != target
 			|| !f.tasks().isRunning(AttackTargetTask.class)) {
-			attackTask = new AttackTargetTask(TaskPriority.COMBAT, target, wantHold);
+			attackTask = new AttackTargetTask(TaskPriority.COMBAT, target, wantHold, cfg.sneakOnBoss && targetIsBoss);
 			attackTaskHold = wantHold;
 			attackTaskTarget = target;
 			f.tasks().submit(f, ID, attackTask);
