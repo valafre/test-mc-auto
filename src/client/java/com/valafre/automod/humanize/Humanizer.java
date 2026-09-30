@@ -57,8 +57,10 @@ public final class Humanizer {
 			band += (targetBand(state, entity) - band) * BAND_SMOOTHING;
 		}
 
-		double min = cfg.aimBandMinFraction;
-		double y = box.minY + box.getYsize() * (min + (1.0 - min) * band);
+		// Bande de visée : de aimBandLowFraction (depuis le bas) à aimBandHighFraction (soit 30 % de marge depuis le haut).
+		double low = cfg.aimBandLowFraction;
+		double high = Math.max(low, cfg.aimBandHighFraction);
+		double y = box.minY + box.getYsize() * (low + (high - low) * band);
 		return new Vec3(center.x + velX * cfg.aimLeadTicks, y, center.z + velZ * cfg.aimLeadTicks);
 	}
 

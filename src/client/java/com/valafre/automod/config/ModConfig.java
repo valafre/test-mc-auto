@@ -20,7 +20,7 @@ public final class ModConfig {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger("automod");
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-	private static final int CURRENT_VERSION = 8;
+	private static final int CURRENT_VERSION = 9;
 	private static ModConfig instance = new ModConfig();
 
 	/** Sert à migrer les anciens fichiers de config dont les valeurs par défaut ont changé. */
@@ -89,7 +89,9 @@ public final class ModConfig {
 	// ========================================
 	public boolean humanize = true;
 	/** La visée reste dans la partie HAUTE de la hitbox : à partir de cette fraction de la hauteur (0.55 = les 45 % du haut). */
-	public double aimBandMinFraction = 0.55;
+	public double aimBandLowFraction = 0.45;
+	/** Limite haute de la bande, en fraction de la hauteur depuis le bas : 0.70 = 30 % de marge depuis le haut. */
+	public double aimBandHighFraction = 0.70;
 	/** Anticipation : on vise la position de la cible dans X ticks (selon sa vitesse) pour ne pas être en retard sur une cible mobile. */
 	public double aimLeadTicks = 2.0;
 	/** Marge ajoutée à la hitbox pour décider qu'on "est dessus" (le serveur ne vérifie que la distance). */
@@ -118,10 +120,10 @@ public final class ModConfig {
 	public float rotationEaseFactor = 0.45f;
 	/** Étale chaque pas de rotation sur les images du tick (caméra fluide à haut FPS au lieu de 20 sauts/s). */
 	public boolean smoothFrameRotation = true;
-	/** Caméra naturelle : vitesse angulaire maximale (degrés/tick) ; 14 = environ 280 degrés/s en crête. */
-	public float camPeakSpeedDeg = 14.0f;
+	/** Caméra naturelle : vitesse angulaire maximale (degrés/tick) ; 18 = environ 360 degrés/s en crête. */
+	public float camPeakSpeedDeg = 18.0f;
 	/** Variation maximale de la vitesse de la caméra par tick (degrés/tick²) : démarrage et arrêt progressifs, jamais brusques. */
-	public float camMaxAccelDeg = 5.0f;
+	public float camMaxAccelDeg = 6.5f;
 	/** Durée minimale (ticks) d'un mouvement de caméra, même pour un tout petit angle. */
 	public float camMinSettleTicks = 2.0f;
 	/** Ticks ajoutés par doublement de (angle / taille apparente de la cible) : grand angle ou petite cible = plus long. */
@@ -252,6 +254,10 @@ public final class ModConfig {
 		if (c.configVersion < 8) {
 			c.idleSearchIntervalTicks = 1;
 			c.camPeakSpeedDeg = 14.0f;
+		}
+		if (c.configVersion < 9) { // visée plus vive (les nouveaux champs de bande prennent leurs défauts)
+			c.camPeakSpeedDeg = 18.0f;
+			c.camMaxAccelDeg = 6.5f;
 		}
 		c.configVersion = CURRENT_VERSION;
 	}

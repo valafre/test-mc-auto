@@ -24,7 +24,7 @@ public final class MovementController {
 	private static final double KEY_OFF = 0.15;
 	private static final double WAYPOINT_REACHED = 0.7;
 	private static final int BRAKE_LOOKAHEAD_TICKS = 3;
-	private static final int JUMP_COOLDOWN_TICKS = 8;
+	private static final int JUMP_COOLDOWN_TICKS = 12;
 	private static final int STUCK_WINDOWS_BEFORE_BLOCKED = 3;
 
 	private final InputController input;
@@ -167,7 +167,10 @@ public final class MovementController {
 		if (jumpCooldown > 0) {
 			jumpCooldown--;
 		}
-		boolean jump = state.onGround() && jumpCooldown == 0 && state.player().horizontalCollision;
+		// Saut seulement devant une vraie marche d'un bloc dans la direction du regard (pas quand on frotte un mur).
+		double yawFwd = Math.toRadians(state.yaw());
+		boolean jump = state.onGround() && jumpCooldown == 0 && state.player().horizontalCollision
+			&& stepAhead(state, -Math.sin(yawFwd), Math.cos(yawFwd));
 		if (jump) {
 			jumpCooldown = JUMP_COOLDOWN_TICKS;
 		}
@@ -290,14 +293,33 @@ public final class MovementController {
 			jumpCooldown--;
 		}
 		collisionTicks = state.player().horizontalCollision && forwardOn ? collisionTicks + 1 : 0;
-		boolean needsStep = waypoint.y > pos.y + 0.6 && Math.sqrt((waypoint.x - pos.x) * (waypoint.x - pos.x)
-			+ (waypoint.z - pos.z) * (waypoint.z - pos.z)) < 1.6;
-		boolean jump = state.onGround() && jumpCooldown == 0
-			&& (needsStep || (state.player().horizontalCollision && forwardOn));
+		// Saut uniquement s'il y a une marche d'un bloc franchissable DEVANT (vers le point visé) ET qu'on est réellement
+		// bloqué par elle ou que le point est plus haut. Frotter un mur ou longer une paroi ne déclenche plus de saut.
+		boolean higher = waypoint.y > pos.y + 0.6;
+		boolean jump = state.onGround() && jumpCooldown == 0 && forwardOn
+			&& (state.player().horizontalCollision || higher)
+			&& stepAhead(state, waypoint.x - pos.x, waypoint.z - pos.z);
 		if (jump) {
 			jumpCooldown = JUMP_COOLDOWN_TICKS;
 		}
 		input.request(owner, Key.JUMP, jump);
+	}
+
+	/**
+	 * Une marche d'un bloc est-elle devant (direction dx, dz) ? Le bloc devant est plein, mais la case au-dessus est
+	 * praticable et la tête a la place de monter. C'est la seule situation où sauter est utile.
+	 */
+	private static boolean stepAhead(PlayerState state, double dx, double dz) {
+		double len = Math.sqrt(dx * dx + dz * dz);
+		if (len < 1.0E-4) {
+			return false;
+		}
+		Vec3 p = state.position();
+		BlockPos ahead = BlockPos.containing(p.x + dx / len * 0.7, p.y + 0.05, p.z + dz / len * 0.7);
+		var level = state.level();
+		return !Walkability.isBodyFree(level, ahead)
+			&& Walkability.canStandAt(level, ahead.above())
+			&& Walkability.isBodyFree(level, state.player().blockPosition().above());
 	}
 
 	private static boolean hysteresis(boolean current, double value) {
