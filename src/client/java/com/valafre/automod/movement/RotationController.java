@@ -17,6 +17,9 @@ public final class RotationController {
 	private Vec3 target;
 	private float yawVelocity;
 	private float pitchVelocity;
+	private float pendingYaw;    // pas du tick courant, appliqué progressivement par frameUpdate
+	private float pendingPitch;
+	private float applied = 1.0f; // fraction du pas déjà appliquée (1 = rien en attente)
 
 	public RotationController(Humanizer humanizer) {
 		this.humanizer = humanizer;
@@ -35,6 +38,9 @@ public final class RotationController {
 		target = null;
 		yawVelocity = 0;
 		pitchVelocity = 0;
+		pendingYaw = 0;
+		pendingPitch = 0;
+		applied = 1.0f;
 	}
 
 	public boolean isActive() {
@@ -43,6 +49,7 @@ public final class RotationController {
 
 	/** Applique un pas de rotation vers la cible demandée ce tick, puis oublie la demande. */
 	public void update(PlayerState state) {
+		flushPending(state.player()); // le pas du tick précédent doit être complet avant de calculer l'écart restant
 		if (target == null) {
 			yawVelocity = 0;   // plus de demande : la prochaine rotation repart de zéro (accélération progressive)
 			pitchVelocity = 0;
@@ -70,8 +77,14 @@ public final class RotationController {
 		float newYaw = yaw + yawStep;
 		float newPitch = pitch + pitchStep;
 
-		player.setYRot(newYaw);
-		player.setXRot(Mth.clamp(newPitch, -90.0f, 90.0f));
+		if (cfg.smoothFrameRotation) {
+			pendingYaw = yawStep;
+			pendingPitch = pitchStep;
+			applied = 0.0f;
+		} else {
+			player.setYRot(newYaw);
+			player.setXRot(Mth.clamp(newPitch, -90.0f, 90.0f));
+		}
 		target = null;
 	}
 
@@ -83,6 +96,35 @@ public final class RotationController {
 		float abs = Math.abs(delta);
 		float speed = Mth.clamp(abs * easeFactor, minSpeed, maxSpeed);
 		return Math.copySign(Math.min(abs, speed), delta);
+	}
+
+	/**
+	 * Appelé à chaque IMAGE rendue (pas seulement chaque tick) : applique la part du pas du tick correspondant à la
+	 * progression {@code partialTick} (0..1). yRotO/xRotO suivent pour que l'interpolation de la caméra reste exacte.
+	 */
+	public void frameUpdate(LocalPlayer player, float partialTick) {
+		float progress = Mth.clamp(partialTick, 0.0f, 1.0f);
+		if (applied >= 1.0f || progress <= applied) {
+			return;
+		}
+		float share = progress - applied;
+		rotateBy(player, pendingYaw * share, pendingPitch * share);
+		applied = progress;
+	}
+
+	private void flushPending(LocalPlayer player) {
+		if (applied < 1.0f) {
+			float rest = 1.0f - applied;
+			rotateBy(player, pendingYaw * rest, pendingPitch * rest);
+			applied = 1.0f;
+		}
+	}
+
+	private static void rotateBy(LocalPlayer player, float yaw, float pitch) {
+		player.setYRot(player.getYRot() + yaw);
+		player.setXRot(Mth.clamp(player.getXRot() + pitch, -90.0f, 90.0f));
+		player.yRotO = player.getYRot();
+		player.xRotO = player.getXRot();
 	}
 
 	private static float approach(float current, float wanted, float maxChange) {

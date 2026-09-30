@@ -148,8 +148,9 @@ public final class VoidgloomModule extends AbstractModule {
 				handledMechanic = null;
 				holdPosition = false;
 				mechanics.reset();
-				searchTimer = 0; // chercher la cible suivante tout de suite
+				searchTimer = 0; // chercher la cible suivante tout de suite, dans ce même tick
 				fsm.transition(VoidgloomState.SEARCHING_TARGET);
+				searchTarget(f);
 			}
 			case STOPPING -> {
 				stopActions(f);

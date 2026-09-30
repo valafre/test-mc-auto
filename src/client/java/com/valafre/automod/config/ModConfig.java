@@ -20,7 +20,7 @@ public final class ModConfig {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger("automod");
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-	private static final int CURRENT_VERSION = 2;
+	private static final int CURRENT_VERSION = 3;
 	private static ModConfig instance = new ModConfig();
 
 	/** Sert à migrer les anciens fichiers de config dont les valeurs par défaut ont changé. */
@@ -41,7 +41,7 @@ public final class ModConfig {
 	/** Intervalle (ticks) entre deux recherches d'entités quand aucune cible n'est suivie. */
 	public int targetSearchIntervalTicks = 10;
 	/** Intervalle de recherche quand aucune cible n'est suivie (enchaînement des kills). */
-	public int idleSearchIntervalTicks = 2;
+	public int idleSearchIntervalTicks = 1;
 	/** Sur certains serveurs le nom est porté par un ArmorStand posé sur l'Enderman : on l'accepte aussi. */
 	public boolean allowArmorStandNameplate = true;
 	/** Ne cibler que le boss invoqué par soi (ligne "Spawned by: pseudo" du nametag). */
@@ -68,8 +68,8 @@ public final class ModConfig {
 	public double aimOffsetFraction = 0.25;
 	/** Variation (+/-) de la vitesse de rotation propre à chaque cible. */
 	public float rotationSpeedVariation = 0.2f;
-	public int reactionDelayMinTicks = 1;
-	public int reactionDelayMaxTicks = 5;
+	public int reactionDelayMinTicks = 0;
+	public int reactionDelayMaxTicks = 2;
 
 	// ========================================
 	// DISTANCES
@@ -92,6 +92,8 @@ public final class ModConfig {
 	public float maxPitchSpeed = 15.0f;
 	/** Fraction de l'écart restant corrigée par tick (avant bornage min/max) : donne le ralentissement progressif. */
 	public float rotationEaseFactor = 0.35f;
+	/** Étale chaque pas de rotation sur les images du tick (caméra fluide à haut FPS au lieu de 20 sauts/s). */
+	public boolean smoothFrameRotation = true;
 	public float alignToleranceYaw = 6.0f;
 	public float alignTolerancePitch = 8.0f;
 
@@ -177,6 +179,11 @@ public final class ModConfig {
 			c.reactionDelayMaxTicks = 5;
 			c.idleSearchIntervalTicks = 2;
 			c.minAttackStrength = 0.0f;
+		}
+		if (c.configVersion < 3) { // enchaînement quasi immédiat (~2-3 ticks)
+			c.reactionDelayMinTicks = 0;
+			c.reactionDelayMaxTicks = 2;
+			c.idleSearchIntervalTicks = 1;
 		}
 		c.configVersion = CURRENT_VERSION;
 	}

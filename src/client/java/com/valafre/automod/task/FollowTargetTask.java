@@ -14,7 +14,10 @@ import net.minecraft.world.entity.Entity;
  */
 public final class FollowTargetTask extends Task {
 
+	private static final double RESUME_MARGIN = 0.7;
+
 	private final Entity target;
+	private boolean moving;
 
 	public FollowTargetTask(int priority, Entity target) {
 		super(priority);
@@ -34,7 +37,9 @@ public final class FollowTargetTask extends Task {
 		TargetInfo info = TargetInfo.of(f.player(), target);
 		f.rotation().lookAt(f.humanizer().adjustAim(target, info.aimPoint()));
 		ModConfig cfg = ModConfig.get();
-		if (info.distance() > cfg.approachDistance) {
+		// Hystérésis : on s'arrête à approachDistance mais on ne repart qu'au-delà de +0.7 bloc (pas de stop-and-go).
+		moving = moving ? info.distance() > cfg.approachDistance : info.distance() > cfg.approachDistance + RESUME_MARGIN;
+		if (moving) {
 			// Destination = position actuelle de la cible ; stop à approachDistance de sa position horizontale.
 			f.movement().moveTo(f.player(), owner(), target.position(), cfg.approachDistance, false);
 		} else {
