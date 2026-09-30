@@ -20,6 +20,10 @@ import java.util.PriorityQueue;
 public final class PathController {
 
 	private static final int MAX_DROP = 3;
+	/** Dénivelé maximal franchissable en sautant (le saut monte d'environ 1,25). */
+	private static final double MAX_RISE = 1.2;
+	/** Jusqu'à cette hauteur on monte en marchant, sans sauter. */
+	private static final double WALK_RISE = 0.6;
 	private static final int[][] DIRECTIONS = {
 		{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}
 	};
@@ -135,7 +139,14 @@ public final class PathController {
 		BlockPos next = null;
 
 		if (Walkability.canStandAt(level, side)) {
-			next = side;
+			// Hauteur réelle des surfaces (demi-dalles...) : un "bloc de plus" peut valoir 0,5 ou 1,5.
+			double rise = Walkability.standHeight(level, side) - Walkability.standHeight(level, base);
+			if (rise <= MAX_RISE) {
+				next = side;
+				if (rise > WALK_RISE) {
+					cost += 0.5; // il faudra sauter
+				}
+			}
 		} else if (Walkability.isBodyFree(level, side)) {
 			// Vide devant : descente (chute jusqu'à MAX_DROP blocs).
 			for (int k = 1; k <= MAX_DROP; k++) {
@@ -152,7 +163,8 @@ public final class PathController {
 		} else {
 			// Obstacle devant : montée d'un bloc si la tête a la place de sauter.
 			BlockPos up = side.above();
-			if (Walkability.canStandAt(level, up) && Walkability.isBodyFree(level, base.above())) {
+			if (Walkability.canStandAt(level, up) && Walkability.isBodyFree(level, base.above())
+				&& Walkability.standHeight(level, up) - Walkability.standHeight(level, base) <= MAX_RISE) {
 				next = up;
 				cost += 0.5;
 			}

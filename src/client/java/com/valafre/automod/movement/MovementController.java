@@ -25,6 +25,7 @@ public final class MovementController {
 	private static final double WAYPOINT_REACHED = 0.7;
 	private static final int BRAKE_LOOKAHEAD_TICKS = 3;
 	private static final int JUMP_COOLDOWN_TICKS = 12;
+	private static final double JUMP_REACH = 1.15;
 	private static final int STUCK_WINDOWS_BEFORE_BLOCKED = 3;
 
 	private final InputController input;
@@ -128,6 +129,22 @@ public final class MovementController {
 	/** Dernier résultat de moveTo, pour l'affichage de diagnostic. */
 	public String lastStatus() {
 		return lastStatus;
+	}
+
+	// ========================================
+	// COLLER À UNE FACE
+	// ========================================
+
+	/**
+	 * Avance tout droit vers {@code point} (en le regardant) : sert à se coller contre la face d'un bloc. Pas de chemin,
+	 * pas de freinage : le joueur pousse contre le bloc jusqu'à ce que l'appelant constate le contact.
+	 */
+	public void pushToward(PlayerState state, String owner, Vec3 point) {
+		Vec3 eye = state.eyePosition();
+		rotation.lookAt(new Vec3(point.x, eye.y, point.z), null, "PATH");
+		float error = Math.abs(RotationController.yawDelta(eye, point, state.yaw()));
+		input.request(owner, Key.FORWARD, error < 35.0f); // on tourne d'abord, on pousse ensuite
+		lastStatus = "COLLÉ à la face";
 	}
 
 	// ========================================
@@ -306,20 +323,13 @@ public final class MovementController {
 	}
 
 	/**
-	 * Une marche d'un bloc est-elle devant (direction dx, dz) ? Le bloc devant est plein, mais la case au-dessus est
-	 * praticable et la tête a la place de monter. C'est la seule situation où sauter est utile.
+	 * Sauter est-il utile ET possible devant (direction dx, dz) ? Calcule le dénivelé réel à gravir (demi-dalles comprises) :
+	 * jusqu'à 0,6 on monte en marchant (pas de saut), entre 0,6 et 1,15 le saut passe, au-delà (ex. 1,5 depuis une demi-dalle)
+	 * le saut serait inutile donc on ne saute pas.
 	 */
 	private static boolean stepAhead(PlayerState state, double dx, double dz) {
-		double len = Math.sqrt(dx * dx + dz * dz);
-		if (len < 1.0E-4) {
-			return false;
-		}
-		Vec3 p = state.position();
-		BlockPos ahead = BlockPos.containing(p.x + dx / len * 0.7, p.y + 0.05, p.z + dz / len * 0.7);
-		var level = state.level();
-		return !Walkability.isBodyFree(level, ahead)
-			&& Walkability.canStandAt(level, ahead.above())
-			&& Walkability.isBodyFree(level, state.player().blockPosition().above());
+		double rise = Walkability.riseAhead(state.level(), state.position(), dx, dz);
+		return rise > 0.6 && rise <= JUMP_REACH;
 	}
 
 	private static boolean hysteresis(boolean current, double value) {

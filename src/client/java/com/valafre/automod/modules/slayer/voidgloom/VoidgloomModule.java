@@ -30,6 +30,11 @@ public final class VoidgloomModule extends AbstractModule {
 
 	public static final String ID = "voidgloom";
 	private static final int MODULE_PRIORITY = 50;
+	/** Contact avec la face à l'arrivée (quelques cm) ; pendant le maintien on tolère un peu plus avant de se recoller. */
+	private static final double OFF_SCREEN_PENALTY = 6.0;
+	private static final double NO_SIGHT_PENALTY = 4.0;
+	private static final double TOUCH_CHECK = 0.1;
+	private static final double TOUCH_HOLD_TOLERANCE = 0.3;
 
 	private final StateMachine<VoidgloomState> fsm = new StateMachine<>("Voidgloom", VoidgloomState.IDLE);
 	private final GroundMechanicDetector mechanics = new GroundMechanicDetector();
@@ -51,6 +56,7 @@ public final class VoidgloomModule extends AbstractModule {
 	private int reactionTicks;          // délai de réaction humain avant d'agir sur une nouvelle cible
 	private int bossCheckTimer;
 	private int retargetAccum;
+	private boolean pressMode;          // la position choisie doit TOUCHER une face du beacon
 	private BlockPos moveDestination;   // case de repositionnement choisie (pour vérifier qu'on y est VRAIMENT collé)
 	private AttackTargetTask attackTask;
 	private boolean attackTaskHold;
@@ -206,7 +212,7 @@ public final class VoidgloomModule extends AbstractModule {
 		double range = cfg.farmMobs ? Math.max(cfg.targetSearchRange, cfg.farmSearchRange) : cfg.targetSearchRange;
 		// Le boss est toujours prioritaire ; sinon on farme l'Enderman normal le plus proche pour le faire apparaître.
 		EnderMan boss = f.targetSelector().select(result.bosses(), ps.position(), null, range);
-		EnderMan picked = boss != null ? boss : f.targetSelector().selectBy(reachable(result.mobs()), m -> approachCost(ps, m));
+		EnderMan picked = boss != null ? boss : f.targetSelector().selectBy(reachable(result.mobs()), m -> approachCost(f, ps, m));
 		if (picked != null) {
 			target = picked;
 			noLosTicks = 0;
@@ -372,7 +378,10 @@ public final class VoidgloomModule extends AbstractModule {
 			case CHOOSING_POSITION -> choosePosition(f);
 			case REPOSITIONING -> reposition(f);
 			case POSITION_REACHED -> {
-				if (!isNear(ps, moveDestination, cfg.positionArriveDistance + 0.3)) {
+				boolean placed = pressMode
+					? MoveToPositionTask.isTouching(f, mechanic, TOUCH_CHECK)
+					: isNear(ps, moveDestination, cfg.positionArriveDistance + 0.3);
+				if (!placed) {
 					// Pas vraiment collé à la position : on recommence au lieu de se battre au mauvais endroit.
 					Debug.log("Voidgloom", () -> "Position non atteinte précisément, nouvel essai");
 					if (++repositionAttempts >= cfg.maxRepositionAttempts) {
@@ -417,10 +426,33 @@ public final class VoidgloomModule extends AbstractModule {
 		return Math.min(cfg.transitionMaxTicks, (int) (angle / 45.0f));
 	}
 
-	/** Coût d'une cible candidate : distance + petite pénalité par degré à tourner (on préfère celle qui est dans l'axe). */
-	private static double approachCost(PlayerState ps, net.minecraft.world.entity.Entity entity) {
+	/**
+	 * Coût d'une cible candidate (plus bas = préférée) : distance + petite pénalité par degré à tourner, plus de
+	 * fortes pénalités pour les mobs hors de l'écran ou cachés derrière un bloc. On choisit donc en priorité ceux qu'on voit.
+	 */
+	private static double approachCost(Framework f, PlayerState ps, net.minecraft.world.entity.Entity entity) {
 		float angle = Math.abs(RotationController.yawDelta(ps.eyePosition(), entity.position(), ps.yaw()));
-		return ps.position().distanceTo(entity.position()) + 0.02 * angle;
+		double cost = ps.position().distanceTo(entity.position()) + 0.02 * angle;
+		if (!isOnScreen(f, ps, entity)) {
+			cost += OFF_SCREEN_PENALTY;
+		}
+		if (!f.combat().hasLineOfSight(ps, entity)) {
+			cost += NO_SIGHT_PENALTY;
+		}
+		return cost;
+	}
+
+	/** L'entité est-elle dans le champ de vision affiché (FOV vertical de l'option, FOV horizontal déduit du format de la fenêtre) ? */
+	private static boolean isOnScreen(Framework f, PlayerState ps, net.minecraft.world.entity.Entity entity) {
+		net.minecraft.client.Minecraft mc = f.minecraft();
+		net.minecraft.world.phys.Vec3 eye = ps.eyePosition();
+		net.minecraft.world.phys.Vec3 center = entity.getBoundingBox().getCenter();
+		double halfV = Math.toRadians(mc.options.fov().get()) / 2.0;
+		double aspect = (double) mc.getWindow().getWidth() / Math.max(1, mc.getWindow().getHeight());
+		double halfH = Math.atan(Math.tan(halfV) * aspect);
+		double yaw = Math.toRadians(Math.abs(RotationController.yawDelta(eye, center, ps.yaw())));
+		double pitch = Math.toRadians(Math.abs(RotationController.pitchDelta(eye, center, ps.pitch())));
+		return yaw <= halfH && pitch <= halfV;
 	}
 
 	private boolean isRepositioning() {
@@ -452,7 +484,9 @@ public final class VoidgloomModule extends AbstractModule {
 		BlockPos dest = choice.get().pos();
 		moveDestination = dest;
 		BlockPos mech = mechanic;
-		moveTask = new MoveToPositionTask(TaskPriority.REPOSITIONING, dest, () -> mechanics.isPresent(f.player(), mech));
+		pressMode = choice.get().touch();
+		moveTask = new MoveToPositionTask(TaskPriority.REPOSITIONING, dest, () -> mechanics.isPresent(f.player(), mech),
+			pressMode ? mech : null);
 		if (f.tasks().submit(f, ID, moveTask)) {
 			Debug.log("Movement", () -> "Destination = " + dest);
 			fsm.transition(VoidgloomState.REPOSITIONING);
@@ -494,7 +528,10 @@ public final class VoidgloomModule extends AbstractModule {
 		ModConfig cfg = ModConfig.get();
 		PlayerState ps = f.player();
 		boolean wantHold = holdPosition;
-		if (wantHold && !isNear(ps, moveDestination, cfg.positionDriftDistance)) {
+		boolean drifted = pressMode
+			? !MoveToPositionTask.isTouching(f, mechanic, TOUCH_HOLD_TOLERANCE)
+			: !isNear(ps, moveDestination, cfg.positionDriftDistance);
+		if (wantHold && drifted) {
 			// Écarté de la position (recul, knockback...) : on y retourne.
 			Debug.log("Voidgloom", () -> "Écarté de la position, retour");
 			holdPosition = false;

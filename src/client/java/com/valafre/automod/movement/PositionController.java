@@ -41,7 +41,8 @@ public final class PositionController {
 	 */
 	public record Request(BlockPos anchor, Vec3 combatTarget, Set<BlockPos> excluded) {}
 
-	public record Candidate(BlockPos pos, Slot slot, double score, int pathLength) {
+	/** @param touch la position touche une face du bloc d'ancrage (le joueur doit s'y coller) */
+	public record Candidate(BlockPos pos, Slot slot, double score, int pathLength, boolean touch) {
 		public Vec3 center() {
 			return new Vec3(pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5);
 		}
@@ -58,6 +59,21 @@ public final class PositionController {
 	// ========================================
 
 	public Optional<Candidate> choose(PlayerState state, Request request) {
+		// 1. Positions COLLÉES à une face du bloc (4 côtés + dessus) : le joueur doit vraiment toucher la mécanique.
+		Candidate best = search(state, request, true);
+		// 2. Repli si aucune n'est possible : diagonales et anneau plus large (sans contact garanti).
+		if (best == null) {
+			best = search(state, request, false);
+		}
+		Candidate chosen = best;
+		Debug.log("Movement", () -> chosen == null
+			? "Aucune position candidate valide"
+			: "Position choisie " + chosen.pos() + " (" + chosen.slot() + (chosen.touch() ? ", collée" : "")
+				+ ", score=" + String.format("%.1f", chosen.score()) + ")");
+		return Optional.ofNullable(best);
+	}
+
+	private Candidate search(PlayerState state, Request request, boolean touchOnly) {
 		ModConfig cfg = ModConfig.get();
 		Level level = state.level();
 		BlockPos playerPos = state.player().blockPosition();
@@ -67,27 +83,29 @@ public final class PositionController {
 			if (slot == Slot.ABOVE && !cfg.allowAbovePosition) {
 				continue;
 			}
-			// Anneaux de 1 à positionRingRadius : les positions les plus collées à la mécanique sont préférées (malus de distance au score).
-			int maxRing = slot == Slot.ABOVE ? 1 : Math.max(1, cfg.positionRingRadius);
+			boolean diagonal = slot.dx != 0 && slot.dz != 0;
+			if (touchOnly && diagonal) {
+				continue; // une diagonale ne touche le bloc que par une arête, pas par une face
+			}
+			int maxRing = touchOnly || slot == Slot.ABOVE ? 1 : Math.max(1, cfg.positionRingRadius);
 			for (int ring = 1; ring <= maxRing; ring++) {
 				BlockPos base = slot == Slot.ABOVE
 					? request.anchor().above()
 					: request.anchor().offset(slot.dx * ring, 0, slot.dz * ring);
-				// Sol non plat : on teste le niveau de la mécanique, puis une marche en haut, puis une marche en bas.
-				int[] yOffsets = slot == Slot.ABOVE ? new int[] {0} : new int[] {0, 1, -1};
+				// Contact : même niveau que le bloc (ou une marche en dessous, le corps touche encore sa face).
+				int[] yOffsets = slot == Slot.ABOVE ? new int[] {0} : touchOnly ? new int[] {0, -1} : new int[] {0, 1, -1};
 				for (int dy : yOffsets) {
 					Candidate c = evaluate(state, level, playerPos, request, slot, base.above(dy));
-					if (c != null && (best == null || c.score() > best.score())) {
-						best = c;
+					if (c != null) {
+						c = new Candidate(c.pos(), c.slot(), c.score(), c.pathLength(), touchOnly);
+						if (best == null || c.score() > best.score()) {
+							best = c;
+						}
 					}
 				}
 			}
 		}
-		Candidate chosen = best;
-		Debug.log("Movement", () -> chosen == null
-			? "Aucune position candidate valide"
-			: "Position choisie " + chosen.pos() + " (" + chosen.slot() + ", score=" + String.format("%.1f", chosen.score()) + ")");
-		return Optional.ofNullable(best);
+		return best;
 	}
 
 	/** @return la position notée, ou null si rejetée (la raison est loguée en debug). */
@@ -124,7 +142,7 @@ public final class PositionController {
 			return reject(slot, pos, "inaccessible");
 		}
 
-		return new Candidate(pos, slot, score(state, level, req, slot, pos, path.size(), combatDist), path.size());
+		return new Candidate(pos, slot, score(state, level, req, slot, pos, path.size(), combatDist), path.size(), false);
 	}
 
 	private static boolean isUnder(BlockPos pos, BlockPos anchor, double radius) {
