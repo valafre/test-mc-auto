@@ -9,6 +9,7 @@ import com.valafre.automod.movement.RotationController;
 import com.valafre.automod.scoreboard.ScoreboardReader;
 import com.valafre.automod.scoreboard.SlayerDetector;
 import com.valafre.automod.targeting.EntityDetector;
+import com.valafre.automod.targeting.EntityInfoResolver;
 import com.valafre.automod.targeting.TargetSelector;
 import net.minecraft.client.Minecraft;
 
@@ -24,6 +25,7 @@ public final class Framework {
 	private final PositionController positions = new PositionController(paths);
 	private final TargetSelector targetSelector = new TargetSelector();
 	private final EntityDetector entityDetector = new EntityDetector();
+	private final EntityInfoResolver entityInfo = new EntityInfoResolver();
 	private final CombatController combat;
 	private final ScoreboardReader scoreboard = new ScoreboardReader();
 	private final SlayerDetector slayer = new SlayerDetector(scoreboard);
@@ -44,6 +46,7 @@ public final class Framework {
 	public PositionController positions() { return positions; }
 	public TargetSelector targetSelector() { return targetSelector; }
 	public EntityDetector entityDetector() { return entityDetector; }
+	public EntityInfoResolver entityInfo() { return entityInfo; }
 	public CombatController combat() { return combat; }
 	public ScoreboardReader scoreboard() { return scoreboard; }
 	public SlayerDetector slayer() { return slayer; }

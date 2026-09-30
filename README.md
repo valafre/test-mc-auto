@@ -27,7 +27,8 @@ JAVA_HOME=<jdk25> ./gradlew build     # jar dans build/libs/
 core/       Framework, TickManager, TaskManager/Task, StateMachine, SafetyManager, ModuleManager, PlayerState, Debug
 input/      InputController        (seul écrivain des touches, modèle « intention par tick »)
 movement/   RotationController, MovementController, PositionController, PathController (A*), Walkability
-targeting/  TargetSelector, EntityDetector, TargetInfo
+targeting/  TargetSelector, EntityDetector, TargetInfo, EntityInfo + EntityInfoResolver (niveau/nom/vie depuis les nametags)
+nametag/    NametagParser ("[Lv50] Enderman 9,000/9,000❤" -> level, name, health, maxHealth)
 combat/     CombatController
 scoreboard/ ScoreboardReader, SlayerDetector
 task/       LookAt, MoveToPosition, FollowTarget, AttackTarget, StopMovement

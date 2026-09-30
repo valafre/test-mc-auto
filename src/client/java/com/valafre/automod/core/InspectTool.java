@@ -1,11 +1,12 @@
 package com.valafre.automod.core;
 
+import com.valafre.automod.targeting.EntityInfo;
+import com.valafre.automod.targeting.EntityInfoResolver;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
@@ -36,9 +37,10 @@ public final class InspectTool {
 		HitResult hit = mc.hitResult;
 		if (hit instanceof EntityHitResult entityHit) {
 			Entity e = entityHit.getEntity();
-			String name = e.hasCustomName() ? e.getCustomName().getString() : e.getName().getString();
-			return "Entity type=" + EntityType.getKey(e.getType()) + " name=\"" + name + "\""
-				+ " pos=" + e.blockPosition().toShortString();
+			// Nametag analysé (niveau / nom / vie) ; pour un ArmorStand visé on affiche son texte brut.
+			EntityInfo info = new EntityInfoResolver().resolve(mc.level, e);
+			String raw = e.hasCustomName() ? e.getCustomName().getString() : info.rawNametag();
+			return "Entity " + info + " nametag=\"" + raw + "\"";
 		}
 		if (hit instanceof BlockHitResult blockHit && hit.getType() == HitResult.Type.BLOCK) {
 			BlockPos pos = blockHit.getBlockPos();

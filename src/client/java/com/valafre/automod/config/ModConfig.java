@@ -39,6 +39,8 @@ public final class ModConfig {
 	/** Sur certains serveurs le nom est porté par un ArmorStand posé sur l'Enderman : on l'accepte aussi. */
 	public boolean allowArmorStandNameplate = true;
 	public String voidgloomNameKeyword = "voidgloom";
+	/** Niveau exigé du nametag ("[Lv90]") ; 0 = niveau ignoré. */
+	public int voidgloomRequiredLevel = 0;
 
 	// ========================================
 	// DISTANCES

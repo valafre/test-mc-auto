@@ -31,7 +31,7 @@ public final class AutoModScreen extends Screen {
 	protected void init() {
 		ModConfig cfg = ModConfig.get();
 		int x = (width - WIDTH) / 2;
-		int y = height / 2 - 120;
+		int y = height / 2 - 130;
 
 		// Modules
 		toggle(x, y, "Module Voidgloom", () -> isVoidgloomOn(), () -> framework.modules().toggle(framework, VoidgloomModule.ID));
@@ -60,6 +60,9 @@ public final class AutoModScreen extends Screen {
 		y += ROW;
 		stepper(x, y, "Cooldown attaque (ticks)", () -> cfg.attackCooldownTicks,
 			v -> cfg.attackCooldownTicks = (int) Mth.clamp(v, 1, 40), 1.0);
+		y += ROW;
+		stepper(x, y, "Niveau Voidgloom (0=ignoré)", () -> cfg.voidgloomRequiredLevel,
+			v -> cfg.voidgloomRequiredLevel = (int) Mth.clamp(v, 0, 500), 1.0);
 		y += ROW + 6;
 
 		addRenderableWidget(Button.builder(Component.literal("Terminé"), b -> onClose())
@@ -103,7 +106,7 @@ public final class AutoModScreen extends Screen {
 	@Override
 	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
 		super.extractRenderState(graphics, mouseX, mouseY, delta);
-		graphics.text(font, title, (width - font.width(title)) / 2, height / 2 - 140, 0xFFFFFFFF);
+		graphics.text(font, title, (width - font.width(title)) / 2, height / 2 - 150, 0xFFFFFFFF);
 	}
 
 	@Override

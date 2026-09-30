@@ -151,7 +151,7 @@ public final class VoidgloomModule extends AbstractModule {
 		EnderMan picked = f.targetSelector().select(found, ps.position(), null, cfg.targetSearchRange);
 		if (picked != null) {
 			target = picked;
-			Debug.log("Voidgloom", () -> "Cible trouvée : " + picked.getCustomName());
+			Debug.log("Voidgloom", () -> "Cible trouvée : " + f.entityInfo().resolve(ps.level(), picked));
 			fsm.transition(VoidgloomState.FOLLOWING_TARGET);
 		}
 	}
