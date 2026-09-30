@@ -5,6 +5,7 @@ import com.valafre.automod.core.Framework;
 import com.valafre.automod.core.InspectTool;
 import com.valafre.automod.core.TickManager;
 import com.valafre.automod.gui.AutoModScreen;
+import com.valafre.automod.gui.DiagnosticsHud;
 import com.valafre.automod.modules.slayer.voidgloom.VoidgloomModule;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -42,6 +43,7 @@ public class AutoModClient implements ClientModInitializer {
 		menuKey = KeyMappingHelper.registerKeyMapping(
 			new KeyMapping("key.automod.menu", GLFW.GLFW_KEY_INSERT, category));
 
+		DiagnosticsHud.register(framework);
 		new TickManager(framework).register();
 		ClientTickEvents.END_CLIENT_TICK.register(this::handleKeys);
 	}

@@ -13,6 +13,7 @@ public final class SafetyManager {
 	private final Framework framework;
 	private ClientLevel lastLevel;
 	private boolean wasSafe;
+	private String lastProblem = "aucun";
 
 	SafetyManager(Framework framework) {
 		this.framework = framework;
@@ -25,6 +26,7 @@ public final class SafetyManager {
 	/** @return true si l'automatisation peut agir ce tick. Sinon tout a déjà été arrêté et les touches relâchées. */
 	public boolean check(Minecraft mc) {
 		String problem = findProblem(mc);
+		lastProblem = problem == null ? "aucun" : problem;
 		if (problem != null) {
 			if (wasSafe) {
 				stopAll(problem);
@@ -41,6 +43,11 @@ public final class SafetyManager {
 		lastLevel = mc.level;
 		wasSafe = true;
 		return true;
+	}
+
+	/** Raison du dernier arrêt de sécurité ("aucun" si l'automatisation peut agir). */
+	public String lastProblem() {
+		return lastProblem;
 	}
 
 	private static String findProblem(Minecraft mc) {

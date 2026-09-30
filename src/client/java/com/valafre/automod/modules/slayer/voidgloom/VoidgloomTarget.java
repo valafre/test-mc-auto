@@ -22,7 +22,10 @@ public final class VoidgloomTarget {
 	 * le mot-clé ET, si configuré, niveau égal à {@code voidgloomRequiredLevel}. Les Enderman normaux
 	 * ("[Lv50] Enderman 9,000/9,000") sont ignorés.
 	 */
-	public static List<EnderMan> find(Framework f) {
+	/** @param endermen nombre d'Enderman vus à portée (tous), @param bosses ceux retenus comme Voidgloom. */
+	public record Result(List<EnderMan> bosses, int endermen) {}
+
+	public static Result find(Framework f) {
 		ModConfig cfg = ModConfig.get();
 		List<EntityInfo> infos = f.entityInfo().scan(f.player(), EnderMan.class, cfg.targetSearchRange, f.entityDetector());
 		List<EnderMan> result = new ArrayList<>();
@@ -35,6 +38,6 @@ public final class VoidgloomTarget {
 			}
 			result.add(EnderMan.class.cast(info.entity()));
 		}
-		return result;
+		return new Result(result, infos.size());
 	}
 }

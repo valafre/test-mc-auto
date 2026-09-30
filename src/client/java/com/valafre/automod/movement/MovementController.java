@@ -46,7 +46,7 @@ public final class MovementController {
 	private int windowTicks;
 	private Vec3 windowStart;
 	private int stuckWindows;
-	private int noPathTicks;
+	private String lastStatus = "-";
 
 	public MovementController(InputController input, RotationController rotation, PathController paths) {
 		this.input = input;
@@ -74,22 +74,23 @@ public final class MovementController {
 
 		if (horizontal <= stopDistance && Math.abs(dest.y - pos.y) < 2.5) {
 			resetMotion();
+			lastStatus = "ARRIVED";
 			return MoveStatus.ARRIVED;
 		}
 
 		Vec3 waypoint = resolveWaypoint(state, dest);
 		if (waypoint == null) {
-			noPathTicks++;
-			if (noPathTicks > 20) {
-				Debug.log("Movement", () -> "Aucun chemin vers " + dest);
-				return MoveStatus.BLOCKED;
-			}
-			return MoveStatus.MOVING;
+			// Aucun chemin A* (sol irrégulier, but non "standable"...) : on marche quand même droit vers la destination.
+			// Saut automatique sur collision et détection de blocage prennent le relais.
+			waypoint = dest;
+			lastStatus = "MOVING (marche directe, pas de chemin)";
+		} else {
+			lastStatus = path.isEmpty() ? "MOVING (ligne droite)" : "MOVING (chemin A*, " + (path.size() - pathIndex) + " cases)";
 		}
-		noPathTicks = 0;
 
 		if (updateStuck(pos)) {
 			Debug.log("Movement", () -> "Bloqué, abandon de la destination " + dest);
+			lastStatus = "BLOCKED (pas de progrès)";
 			resetMotion();
 			return MoveStatus.BLOCKED;
 		}
@@ -117,7 +118,11 @@ public final class MovementController {
 		windowStart = null;
 		windowTicks = 0;
 		stuckWindows = 0;
-		noPathTicks = 0;
+	}
+
+	/** Dernier résultat de moveTo, pour l'affichage de diagnostic. */
+	public String lastStatus() {
+		return lastStatus;
 	}
 
 	// ========================================

@@ -18,7 +18,6 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.monster.EnderMan;
 
 import java.util.HashSet;
-import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 
@@ -43,6 +42,8 @@ public final class VoidgloomModule extends AbstractModule {
 	private MoveToPositionTask moveTask;
 	private int repositionAttempts;
 	private boolean slayerOk;
+	private int endermenSeen;
+	private int bossesSeen;
 	private boolean holdPosition;       // vrai après un repositionnement tant que la mécanique existe
 
 	@Override
@@ -55,7 +56,8 @@ public final class VoidgloomModule extends AbstractModule {
 		if (!slayerOk) {
 			return "en attente : \"" + ModConfig.get().slayerScoreboardKeyword + "\" absent du scoreboard";
 		}
-		return fsm.current() + (target != null ? " (cible ok)" : " (aucun Voidgloom à portée)");
+		return fsm.current() + (target != null ? " (cible ok)" : " (aucun Voidgloom à portée)")
+			+ " | Enderman vus: " + endermenSeen + ", Voidgloom: " + bossesSeen;
 	}
 
 	@Override
@@ -157,8 +159,10 @@ public final class VoidgloomModule extends AbstractModule {
 		}
 		searchTimer = cfg.targetSearchIntervalTicks - 1;
 		PlayerState ps = f.player();
-		List<EnderMan> found = VoidgloomTarget.find(f);
-		EnderMan picked = f.targetSelector().select(found, ps.position(), null, cfg.targetSearchRange);
+		VoidgloomTarget.Result result = VoidgloomTarget.find(f);
+		endermenSeen = result.endermen();
+		bossesSeen = result.bosses().size();
+		EnderMan picked = f.targetSelector().select(result.bosses(), ps.position(), null, cfg.targetSearchRange);
 		if (picked != null) {
 			target = picked;
 			Debug.log("Voidgloom", () -> "Cible trouvée : " + f.entityInfo().resolve(ps.level(), picked));

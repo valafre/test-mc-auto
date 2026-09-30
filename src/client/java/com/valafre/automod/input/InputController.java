@@ -49,6 +49,17 @@ public final class InputController {
 		ownerPriority = 0;
 	}
 
+	/** Touches actuellement pressées par ce contrôleur, ex. "FORWARD SPRINT" (diagnostic). */
+	public String describeApplied() {
+		StringBuilder sb = new StringBuilder();
+		for (Key key : Key.values()) {
+			if (applied[key.ordinal()]) {
+				sb.append(key.name()).append(' ');
+			}
+		}
+		return sb.isEmpty() ? "aucune" : sb.toString().trim();
+	}
+
 	public String owner() {
 		return owner;
 	}
