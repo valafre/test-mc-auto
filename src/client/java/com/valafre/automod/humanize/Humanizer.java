@@ -19,10 +19,10 @@ public final class Humanizer {
 	private final Random rng = new Random();
 	private int driftEntityId = Integer.MIN_VALUE;
 	private double ox;
-	private double oy;
+	private double band = 0.5;
+	private double goalBand = 0.5;
 	private double oz;
 	private double gx;
-	private double gy;
 	private double gz;
 	private int rerollIn;
 	private float speedFactor = 1.0f;
@@ -31,17 +31,21 @@ public final class Humanizer {
 	// VISÉE
 	// ========================================
 
-	/** Point à viser ce tick : centre + décalage qui glisse doucement vers un nouvel objectif tiré toutes les 1 à 2,5 s. À appeler UNE fois par tick. */
+	/**
+	 * Point à viser ce tick : toujours dans la bande HAUTE de la hitbox (les 45 % du haut), jamais dans le bas.
+	 * Avec l'humanisation, le point glisse doucement dans cette bande et latéralement ; sinon il reste au milieu de la bande.
+	 * À appeler UNE fois par tick.
+	 */
 	public Vec3 adjustAim(Entity entity, Vec3 center) {
 		ModConfig cfg = ModConfig.get();
 		if (!cfg.humanize) {
-			return center;
+			return aim(entity, center, 0, 0, 0.5);
 		}
 		if (entity.getId() != driftEntityId) {
 			driftEntityId = entity.getId();
 			ox = 0;
-			oy = 0;
 			oz = 0;
+			band = 0.5;
 			rerollIn = 0;
 			speedFactor = 1.0f + (rng.nextFloat() * 2 - 1) * cfg.rotationSpeedVariation;
 		}
@@ -49,21 +53,29 @@ public final class Humanizer {
 			AABB box = entity.getBoundingBox();
 			gx = (rng.nextDouble() * 2 - 1) * box.getXsize() * cfg.aimOffsetFraction;
 			gz = (rng.nextDouble() * 2 - 1) * box.getZsize() * cfg.aimOffsetFraction;
-			gy = (rng.nextDouble() * 2 - 1) * box.getYsize() * cfg.aimOffsetFraction * 0.8;
+			goalBand = 0.1 + rng.nextDouble() * 0.8; // évite les bords de la bande
 			rerollIn = 20 + rng.nextInt(30);
 		}
 		ox += (gx - ox) * DRIFT_LERP;
-		oy += (gy - oy) * DRIFT_LERP;
 		oz += (gz - oz) * DRIFT_LERP;
-		return center.add(ox, oy, oz);
+		band += (goalBand - band) * DRIFT_LERP;
+		return aim(entity, center, ox, oz, band);
 	}
 
-	/** Même point que {@link #adjustAim} sans faire avancer la dérive (pour tester l'alignement). */
+	/** Même point que {@link #adjustAim} sans faire avancer la dérive. */
 	public Vec3 currentAim(Entity entity, Vec3 center) {
 		if (!ModConfig.get().humanize || entity.getId() != driftEntityId) {
-			return center;
+			return aim(entity, center, 0, 0, 0.5);
 		}
-		return center.add(ox, oy, oz);
+		return aim(entity, center, ox, oz, band);
+	}
+
+	/** @param bandPosition 0 = bas de la bande haute, 1 = sommet de la hitbox */
+	private static Vec3 aim(Entity entity, Vec3 center, double dx, double dz, double bandPosition) {
+		AABB box = entity.getBoundingBox();
+		double min = ModConfig.get().aimBandMinFraction;
+		double y = box.minY + box.getYsize() * (min + (1.0 - min) * bandPosition);
+		return new Vec3(center.x + dx, y, center.z + dz);
 	}
 
 	// ========================================

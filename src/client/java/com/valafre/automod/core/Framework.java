@@ -37,7 +37,7 @@ public final class Framework {
 
 	public Framework(Minecraft mc) {
 		this.mc = mc;
-		this.combat = new CombatController(mc, rotation, humanizer);
+		this.combat = new CombatController(mc);
 	}
 
 	public Minecraft minecraft() { return mc; }

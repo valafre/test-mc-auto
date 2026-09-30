@@ -3,12 +3,12 @@ package com.valafre.automod.combat;
 import com.valafre.automod.config.ModConfig;
 import com.valafre.automod.core.Debug;
 import com.valafre.automod.core.PlayerState;
-import com.valafre.automod.humanize.Humanizer;
-import com.valafre.automod.movement.RotationController;
 import com.valafre.automod.targeting.TargetInfo;
 import net.minecraft.client.Minecraft;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * Seul point d'attaque du framework. Valide cible, portée, orientation et cooldown avant de frapper
@@ -17,17 +17,13 @@ import net.minecraft.world.entity.LivingEntity;
 public final class CombatController {
 
 	private final Minecraft mc;
-	private final RotationController rotation;
-	private final Humanizer humanizer;
 	private final java.util.Random rng = new java.util.Random();
 	private int nextInterval = 1;   // ticks à attendre avant le prochain coup
 	private double tickDebt;        // reste fractionnaire reporté : garantit le CPS moyen visé
 	private int ticksSinceAttack = Integer.MAX_VALUE / 2;
 
-	public CombatController(Minecraft mc, RotationController rotation, Humanizer humanizer) {
+	public CombatController(Minecraft mc) {
 		this.mc = mc;
-		this.rotation = rotation;
-		this.humanizer = humanizer;
 	}
 
 	/** À appeler une fois par tick pour faire avancer le cooldown. */
@@ -58,12 +54,20 @@ public final class CombatController {
 		nextInterval = Math.max(1, interval);
 	}
 
+	/** Vrai si le rayon du regard (portée d'attaque) traverse la hitbox de la cible : le viseur est réellement dessus. */
+	public boolean isCrosshairOnTarget(PlayerState state, LivingEntity target) {
+		Vec3 eye = state.eyePosition();
+		Vec3 end = eye.add(state.player().getViewVector(1.0f).scale(ModConfig.get().attackDistance));
+		AABB box = target.getBoundingBox().inflate(target.getPickRadius());
+		return box.contains(eye) || box.clip(eye, end).isPresent();
+	}
+
 	public boolean isInRange(PlayerState state, LivingEntity target) {
 		return TargetInfo.of(state, target).distance() <= ModConfig.get().attackDistance;
 	}
 
 	public boolean isAligned(PlayerState state, LivingEntity target) {
-		return rotation.isAligned(state, humanizer.currentAim(target, TargetInfo.of(state, target).aimPoint()));
+		return isCrosshairOnTarget(state, target);
 	}
 
 	/** @return true si une attaque a effectivement été envoyée ce tick. */
@@ -80,8 +84,8 @@ public final class CombatController {
 			return false;
 		}
 		TargetInfo info = TargetInfo.of(state, target);
-		if (info.distance() > cfg.attackDistance || !rotation.isAligned(state, humanizer.currentAim(target, info.aimPoint()))) {
-			return false; // hors portée ou mal orienté : la rotation continue, on n'attaque pas
+		if (info.distance() > cfg.attackDistance || !isCrosshairOnTarget(state, target)) {
+			return false; // hors portée ou viseur pas encore dans la hitbox : la rotation continue, on n'attaque pas
 		}
 		mc.gameMode.attack(state.player(), target);
 		state.player().swing(InteractionHand.MAIN_HAND);

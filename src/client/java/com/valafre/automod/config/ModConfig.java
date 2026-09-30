@@ -64,6 +64,8 @@ public final class ModConfig {
 	// HUMANISATION
 	// ========================================
 	public boolean humanize = true;
+	/** La visée reste dans la partie HAUTE de la hitbox : à partir de cette fraction de la hauteur (0.55 = les 45 % du haut). */
+	public double aimBandMinFraction = 0.55;
 	/** Amplitude de la dérive du point visé, en fraction de la taille de la hitbox. */
 	public double aimOffsetFraction = 0.25;
 	/** Variation (+/-) de la vitesse de rotation propre à chaque cible. */
