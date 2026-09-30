@@ -264,7 +264,9 @@ public final class MovementController {
 		double side = dx * -Math.cos(yawRad) + dz * -Math.sin(yawRad);
 
 		// Freinage : on anticipe l'inertie en relâchant "avant" quelques ticks avant l'arrivée.
-		boolean braking = distToDest - state.horizontalSpeed() * BRAKE_LOOKAHEAD_TICKS <= stopDistance;
+		// Si le joueur est (presque) à l'arrêt, on ne freine pas : sinon il cale à 0,4-0,5 bloc de la case sans jamais l'atteindre.
+		double speed = state.horizontalSpeed();
+		boolean braking = speed > 0.04 && distToDest - speed * BRAKE_LOOKAHEAD_TICKS <= stopDistance;
 
 		forwardOn = hysteresis(forwardOn, fwd) && !braking;
 		// Reculer : indispensable quand on regarde la cible mais que le chemin part dans l'autre sens (contournement d'un mur).

@@ -53,7 +53,7 @@ public final class MoveToPositionTask extends Task {
 			return TaskStatus.FAILED;
 		}
 		Vec3 target = new Vec3(destination.getX() + 0.5, destination.getY(), destination.getZ() + 0.5);
-		MoveStatus status = f.movement().moveTo(f.player(), owner(), target, cfg.stopDistance, true);
+		MoveStatus status = f.movement().moveTo(f.player(), owner(), target, cfg.positionArriveDistance, true);
 		return switch (status) {
 			case ARRIVED -> {
 				Debug.log("Movement", () -> "Repositionnement terminé " + destination);

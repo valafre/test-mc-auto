@@ -20,7 +20,7 @@ public final class ModConfig {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger("automod");
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-	private static final int CURRENT_VERSION = 5;
+	private static final int CURRENT_VERSION = 6;
 	private static ModConfig instance = new ModConfig();
 
 	/** Sert à migrer les anciens fichiers de config dont les valeurs par défaut ont changé. */
@@ -146,6 +146,10 @@ public final class ModConfig {
 	public int mobAcquireTimeoutTicks = 200;
 	/** Enderman normal : abandonné si le joueur reste quasi immobile (moins de 0,5 bloc) pendant X ticks. */
 	public int stuckSkipTicks = 60;
+	/** Enderman normal : on vérifie toutes les X ticks s'il y en a un nettement plus proche que la cible poursuivie. */
+	public int retargetIntervalTicks = 20;
+	/** Il faut qu'il soit plus proche d'au moins cette distance (blocs) pour changer de cible (évite les allers-retours). */
+	public double retargetMarginBlocks = 1.0;
 	/** En dessous de cette distance (oeil -> hitbox) on recule légèrement pour garder la portée. */
 	public double combatMinDistance = 1.4;
 	public int pathMaxNodes = 1500;
@@ -170,6 +174,10 @@ public final class ModConfig {
 	public int skipTargetTicks = 600;
 	public boolean allowAbovePosition = true;
 	public int maxRepositionAttempts = 3;
+	/** Distance horizontale (blocs) à laquelle la position choisie est considérée atteinte : le joueur doit être VRAIMENT dessus. */
+	public double positionArriveDistance = 0.6;
+	/** Pendant qu'on tient la position, si on s'en écarte de plus que ça (recul, knockback), on y retourne. */
+	public double positionDriftDistance = 1.3;
 
 	// ========================================
 	// SCOREBOARD / SLAYER
@@ -237,6 +245,10 @@ public final class ModConfig {
 			c.maxPitchSpeed = 30.0f;
 			c.rotationEaseFactor = 0.45f;
 			c.aimOffsetFraction = 0.12;
+		}
+		if (c.configVersion < 6) { // détection du beacon plus large
+			c.mechanicScanRadius = 12;
+			c.mechanicScanHalfHeight = 4;
 		}
 		c.configVersion = CURRENT_VERSION;
 	}

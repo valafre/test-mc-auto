@@ -67,15 +67,19 @@ public final class PositionController {
 			if (slot == Slot.ABOVE && !cfg.allowAbovePosition) {
 				continue;
 			}
-			BlockPos base = slot == Slot.ABOVE
-				? request.anchor().above()
-				: request.anchor().offset(slot.dx * cfg.positionRingRadius, 0, slot.dz * cfg.positionRingRadius);
-			// Sol non plat : on teste le niveau de la mécanique, puis une marche en haut, puis une marche en bas.
-			int[] yOffsets = slot == Slot.ABOVE ? new int[] {0} : new int[] {0, 1, -1};
-			for (int dy : yOffsets) {
-				Candidate c = evaluate(state, level, playerPos, request, slot, base.above(dy));
-				if (c != null && (best == null || c.score() > best.score())) {
-					best = c;
+			// Anneaux de 1 à positionRingRadius : les positions les plus collées à la mécanique sont préférées (malus de distance au score).
+			int maxRing = slot == Slot.ABOVE ? 1 : Math.max(1, cfg.positionRingRadius);
+			for (int ring = 1; ring <= maxRing; ring++) {
+				BlockPos base = slot == Slot.ABOVE
+					? request.anchor().above()
+					: request.anchor().offset(slot.dx * ring, 0, slot.dz * ring);
+				// Sol non plat : on teste le niveau de la mécanique, puis une marche en haut, puis une marche en bas.
+				int[] yOffsets = slot == Slot.ABOVE ? new int[] {0} : new int[] {0, 1, -1};
+				for (int dy : yOffsets) {
+					Candidate c = evaluate(state, level, playerPos, request, slot, base.above(dy));
+					if (c != null && (best == null || c.score() > best.score())) {
+						best = c;
+					}
 				}
 			}
 		}
@@ -145,6 +149,7 @@ public final class PositionController {
 			score -= 10.0;
 		}
 		score -= 1.5 * combatDist;                                   // proche de la cible de combat
+		score -= 6.0 * Math.hypot(pos.getX() - anchor.getX(), pos.getZ() - anchor.getZ()); // collé à la mécanique
 
 		int walls = 0;
 		int hazards = 0;

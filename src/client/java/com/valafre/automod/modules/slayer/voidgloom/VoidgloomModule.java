@@ -48,6 +48,8 @@ public final class VoidgloomModule extends AbstractModule {
 	private boolean targetIsBoss;       // false : Enderman normal farmé pour faire apparaître le boss
 	private int reactionTicks;          // délai de réaction humain avant d'agir sur une nouvelle cible
 	private int bossCheckTimer;
+	private int retargetAccum;
+	private BlockPos moveDestination;   // case de repositionnement choisie (pour vérifier qu'on y est VRAIMENT collé)
 	private AttackTargetTask attackTask;
 	private boolean attackTaskHold;
 	private EnderMan attackTaskTarget;
@@ -216,6 +218,40 @@ public final class VoidgloomModule extends AbstractModule {
 		return mobs.stream().filter(m -> !skipped.containsKey(m.getId())).toList();
 	}
 
+	/** Toutes les ~1 s : un Enderman nettement plus proche que celui qu'on poursuit ? Alors on change (sauf si on le frappe déjà). */
+	private boolean retargetNearest(Framework f, VoidgloomTarget.Result result, ModConfig cfg) {
+		retargetAccum += cfg.targetSearchIntervalTicks;
+		if (retargetAccum < cfg.retargetIntervalTicks) {
+			return false;
+		}
+		retargetAccum = 0;
+		PlayerState ps = f.player();
+		if (TargetInfo.of(ps, target).distance() <= cfg.attackDistance && f.combat().hasLineOfSight(ps, target)) {
+			return false; // déjà au contact : on ne lâche pas la cible qu'on frappe
+		}
+		EnderMan nearest = f.targetSelector().select(reachable(result.mobs()), ps.position(), null,
+			Math.max(cfg.targetSearchRange, cfg.farmSearchRange));
+		if (nearest == null || nearest == target) {
+			return false;
+		}
+		double current = target.position().distanceTo(ps.position());
+		double other = nearest.position().distanceTo(ps.position());
+		if (other >= current - cfg.retargetMarginBlocks) {
+			return false;
+		}
+		Debug.log("Voidgloom", () -> "Enderman plus proche trouvé (" + Math.round(other) + " au lieu de " + Math.round(current) + ")");
+		stopActions(f);
+		target = nearest;
+		noLosTicks = 0;
+		engagedTicks = -1;
+		acquiredTicks = 0;
+		stuckAnchor = null;
+		stuckTicks = 0;
+		reactionTicks = 0;
+		fsm.transition(VoidgloomState.FOLLOWING_TARGET);
+		return true;
+	}
+
 	private void updateCounters(VoidgloomTarget.Result result) {
 		endermenSeen = result.endermen();
 		bossesSeen = result.bosses().size();
@@ -235,7 +271,7 @@ public final class VoidgloomModule extends AbstractModule {
 		EnderMan boss = f.targetSelector().select(result.bosses(), f.player().position(), null,
 			Math.max(cfg.targetSearchRange, cfg.farmSearchRange));
 		if (boss == null) {
-			return false;
+			return retargetNearest(f, result, cfg);
 		}
 		Debug.log("Voidgloom", () -> "Le boss est apparu, changement de cible");
 		stopActions(f);
@@ -322,13 +358,35 @@ public final class VoidgloomModule extends AbstractModule {
 			case CHOOSING_POSITION -> choosePosition(f);
 			case REPOSITIONING -> reposition(f);
 			case POSITION_REACHED -> {
-				holdPosition = true;
-				f.tasks().cancelOwner(f, ID);
-				fsm.transition(VoidgloomState.ALIGNING);
+				if (!isNear(ps, moveDestination, cfg.positionArriveDistance + 0.3)) {
+					// Pas vraiment collé à la position : on recommence au lieu de se battre au mauvais endroit.
+					Debug.log("Voidgloom", () -> "Position non atteinte précisément, nouvel essai");
+					if (++repositionAttempts >= cfg.maxRepositionAttempts) {
+						holdPosition = false;
+						fsm.transition(VoidgloomState.FOLLOWING_TARGET);
+					} else {
+						fsm.transition(VoidgloomState.CHOOSING_POSITION);
+					}
+				} else {
+					holdPosition = true;
+					f.tasks().cancelOwner(f, ID);
+					fsm.transition(VoidgloomState.ALIGNING);
+				}
 			}
 			case FOLLOWING_TARGET, ALIGNING, ATTACKING -> engage(f);
 			default -> { }
 		}
+	}
+
+	/** Le joueur est-il à moins de {@code tolerance} blocs (horizontal) du centre de la case {@code pos} ? */
+	private static boolean isNear(PlayerState ps, BlockPos pos, double tolerance) {
+		if (pos == null) {
+			return true;
+		}
+		net.minecraft.world.phys.Vec3 p = ps.position();
+		double dx = p.x - (pos.getX() + 0.5);
+		double dz = p.z - (pos.getZ() + 0.5);
+		return dx * dx + dz * dz <= tolerance * tolerance && Math.abs(p.y - pos.getY()) < 1.5;
 	}
 
 	private boolean isRepositioning() {
@@ -346,6 +404,11 @@ public final class VoidgloomModule extends AbstractModule {
 			new PositionController.Request(mechanic, target.position(), failedPositions);
 		Optional<PositionController.Candidate> choice = f.positions().choose(f.player(), request);
 		if (choice.isEmpty()) {
+			// Beacon loin du boss : on se colle quand même au beacon plutôt que de l'ignorer.
+			choice = f.positions().choose(f.player(),
+				new PositionController.Request(mechanic, null, failedPositions));
+		}
+		if (choice.isEmpty()) {
 			// Aucune position sûre : on reste en combat normal, sans réessayer tant que cette mécanique est là.
 			Debug.log("Voidgloom", () -> "Aucune position valide, reprise du combat");
 			holdPosition = false;
@@ -353,6 +416,7 @@ public final class VoidgloomModule extends AbstractModule {
 			return;
 		}
 		BlockPos dest = choice.get().pos();
+		moveDestination = dest;
 		BlockPos mech = mechanic;
 		moveTask = new MoveToPositionTask(TaskPriority.REPOSITIONING, dest, () -> mechanics.isPresent(f.player(), mech));
 		if (f.tasks().submit(f, ID, moveTask)) {
@@ -396,6 +460,15 @@ public final class VoidgloomModule extends AbstractModule {
 		ModConfig cfg = ModConfig.get();
 		PlayerState ps = f.player();
 		boolean wantHold = holdPosition;
+		if (wantHold && !isNear(ps, moveDestination, cfg.positionDriftDistance)) {
+			// Écarté de la position (recul, knockback...) : on y retourne.
+			Debug.log("Voidgloom", () -> "Écarté de la position, retour");
+			holdPosition = false;
+			repositionAttempts = 0;
+			stopActions(f);
+			fsm.transition(VoidgloomState.CHOOSING_POSITION);
+			return;
+		}
 		if (attackTask == null || attackTaskHold != wantHold || attackTaskTarget != target
 			|| !f.tasks().isRunning(AttackTargetTask.class)) {
 			attackTask = new AttackTargetTask(TaskPriority.COMBAT, target, wantHold, cfg.sneakOnBoss && targetIsBoss);
