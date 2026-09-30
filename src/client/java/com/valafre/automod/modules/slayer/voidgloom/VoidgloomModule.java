@@ -131,15 +131,26 @@ public final class VoidgloomModule extends AbstractModule {
 		targetIsBoss = false;
 		reactionTicks = 0;
 		bossCheckTimer = 0;
-		mechanic = null;
+		clearReposition();
 		handledMechanic = null;
-		moveTask = null;
-		holdPosition = false;
-		repositionAttempts = 0;
 		searchTimer = 0;
-		failedPositions.clear();
 		mechanics.reset();
 		fsm.transition(VoidgloomState.IDLE);
+	}
+
+	/**
+	 * Remet à zéro, D'UN COUP, tout l'état lié à la mécanique au sol. Ces champs doivent rester cohérents entre eux :
+	 * holdPosition, pressMode et moveDestination n'ont de sens que si {@code mechanic != null}. Les effacer séparément
+	 * (comme avant) laissait pressMode à true avec mechanic à null, d'où le crash dans isTouching().
+	 */
+	private void clearReposition() {
+		mechanic = null;
+		moveTask = null;
+		moveDestination = null;
+		pressMode = false;
+		holdPosition = false;
+		repositionAttempts = 0;
+		failedPositions.clear();
 	}
 
 	private void stopActions(Framework f) {
@@ -180,9 +191,8 @@ public final class VoidgloomModule extends AbstractModule {
 				stopActions(f);
 				target = null;
 				targetIsBoss = false;
-				mechanic = null;
+				clearReposition();
 				handledMechanic = null;
-				holdPosition = false;
 				mechanics.reset();
 				searchTimer = 0; // chercher la cible suivante tout de suite, dans ce même tick
 				fsm.transition(VoidgloomState.SEARCHING_TARGET);
@@ -359,8 +369,7 @@ public final class VoidgloomModule extends AbstractModule {
 		if (found == null) {
 			handledMechanic = null;
 			if (holdPosition) { // la mécanique a disparu : on reprend le combat normal
-				holdPosition = false;
-				mechanic = null;
+				clearReposition();
 				stopActions(f);
 				fsm.transition(VoidgloomState.FOLLOWING_TARGET);
 			}
@@ -378,14 +387,14 @@ public final class VoidgloomModule extends AbstractModule {
 			case CHOOSING_POSITION -> choosePosition(f);
 			case REPOSITIONING -> reposition(f);
 			case POSITION_REACHED -> {
-				boolean placed = pressMode
+				boolean placed = mechanic != null && (pressMode
 					? MoveToPositionTask.isTouching(f, mechanic, TOUCH_CHECK)
-					: isNear(ps, moveDestination, cfg.positionArriveDistance + 0.3);
+					: isNear(ps, moveDestination, cfg.positionArriveDistance + 0.3));
 				if (!placed) {
 					// Pas vraiment collé à la position : on recommence au lieu de se battre au mauvais endroit.
 					Debug.log("Voidgloom", () -> "Position non atteinte précisément, nouvel essai");
 					if (++repositionAttempts >= cfg.maxRepositionAttempts) {
-						holdPosition = false;
+						clearReposition();
 						fsm.transition(VoidgloomState.FOLLOWING_TARGET);
 					} else {
 						fsm.transition(VoidgloomState.CHOOSING_POSITION);
@@ -466,6 +475,11 @@ public final class VoidgloomModule extends AbstractModule {
 	// ========================================
 
 	private void choosePosition(Framework f) {
+		if (mechanic == null || target == null) { // plus de mécanique à traiter : on reprend le combat normal
+			clearReposition();
+			fsm.transition(VoidgloomState.FOLLOWING_TARGET);
+			return;
+		}
 		PositionController.Request request =
 			new PositionController.Request(mechanic, target.position(), failedPositions);
 		Optional<PositionController.Candidate> choice = f.positions().choose(f.player(), request);
@@ -477,7 +491,7 @@ public final class VoidgloomModule extends AbstractModule {
 		if (choice.isEmpty()) {
 			// Aucune position sûre : on reste en combat normal, sans réessayer tant que cette mécanique est là.
 			Debug.log("Voidgloom", () -> "Aucune position valide, reprise du combat");
-			holdPosition = false;
+			clearReposition();
 			fsm.transition(VoidgloomState.FOLLOWING_TARGET);
 			return;
 		}
@@ -494,8 +508,13 @@ public final class VoidgloomModule extends AbstractModule {
 	}
 
 	private void reposition(Framework f) {
+		if (moveTask == null) { // incohérence : pas de trajet en cours
+			clearReposition();
+			fsm.transition(VoidgloomState.FOLLOWING_TARGET);
+			return;
+		}
 		if (!mechanics.isPresent(f.player(), mechanic)) { // disparue pendant le trajet
-			holdPosition = false;
+			clearReposition();
 			stopActions(f);
 			fsm.transition(VoidgloomState.FOLLOWING_TARGET);
 			return;
@@ -506,9 +525,10 @@ public final class VoidgloomModule extends AbstractModule {
 		} else if (status == TaskStatus.FAILED || status == TaskStatus.CANCELLED) {
 			// Position devenue inaccessible / bloqué : on en exclut cette position et on en cherche une autre.
 			failedPositions.add(moveTask.destination());
-			if (++repositionAttempts >= ModConfig.get().maxRepositionAttempts) {
-				Debug.log("Voidgloom", () -> "Repositionnement abandonné après " + repositionAttempts + " essais");
-				holdPosition = false;
+			int attempts = ++repositionAttempts;
+			if (attempts >= ModConfig.get().maxRepositionAttempts) {
+				Debug.log("Voidgloom", () -> "Repositionnement abandonné après " + attempts + " essais");
+				clearReposition();
 				fsm.transition(VoidgloomState.FOLLOWING_TARGET);
 			} else {
 				fsm.transition(VoidgloomState.CHOOSING_POSITION);
@@ -527,11 +547,12 @@ public final class VoidgloomModule extends AbstractModule {
 	private void engage(Framework f) {
 		ModConfig cfg = ModConfig.get();
 		PlayerState ps = f.player();
-		boolean wantHold = holdPosition;
-		boolean drifted = pressMode
+		// Invariant : tenir une position n'a de sens que s'il existe une mécanique. Sinon on ne tient rien.
+		boolean wantHold = holdPosition && mechanic != null;
+		boolean drifted = wantHold && (pressMode
 			? !MoveToPositionTask.isTouching(f, mechanic, TOUCH_HOLD_TOLERANCE)
-			: !isNear(ps, moveDestination, cfg.positionDriftDistance);
-		if (wantHold && drifted) {
+			: !isNear(ps, moveDestination, cfg.positionDriftDistance));
+		if (drifted) {
 			// Écarté de la position (recul, knockback...) : on y retourne.
 			Debug.log("Voidgloom", () -> "Écarté de la position, retour");
 			holdPosition = false;

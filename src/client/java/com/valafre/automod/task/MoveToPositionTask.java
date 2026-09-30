@@ -47,6 +47,9 @@ public final class MoveToPositionTask extends Task {
 
 	/** La hitbox du joueur touche-t-elle le bloc (tolérance de quelques centimètres) ? */
 	public static boolean isTouching(Framework f, BlockPos block, double tolerance) {
+		if (block == null || f.player().player() == null) { // pas de bloc : aucun contact possible
+			return false;
+		}
 		return f.player().player().getBoundingBox().inflate(tolerance).intersects(new net.minecraft.world.phys.AABB(block));
 	}
 
