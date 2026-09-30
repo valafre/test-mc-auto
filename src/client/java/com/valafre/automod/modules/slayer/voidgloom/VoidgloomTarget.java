@@ -23,7 +23,7 @@ public final class VoidgloomTarget {
 	 * ("[Lv50] Enderman 9,000/9,000") sont ignorés.
 	 */
 	/** @param endermen nombre d'Enderman vus à portée (tous), @param bosses ceux retenus comme Voidgloom. */
-	public record Result(List<EnderMan> bosses, List<EnderMan> mobs, int endermen) {}
+	public record Result(List<EnderMan> bosses, List<EnderMan> mobs, int endermen, int foreignBosses) {}
 
 	public static Result find(Framework f) {
 		ModConfig cfg = ModConfig.get();
@@ -31,6 +31,8 @@ public final class VoidgloomTarget {
 		List<EntityInfo> infos = f.entityInfo().scan(f.player(), EnderMan.class, range, f.entityDetector());
 		List<EnderMan> result = new ArrayList<>();
 		List<EnderMan> mobs = new ArrayList<>();
+		int foreign = 0;
+		String owner = cfg.bossOwnerName.isBlank() ? f.player().player().getName().getString() : cfg.bossOwnerName;
 		for (EntityInfo info : infos) {
 			if (!info.nameContains(cfg.voidgloomNameKeyword)) {
 				// Enderman normal ("[Lv50] Enderman") : cible de farm pour faire apparaître le boss.
@@ -42,8 +44,13 @@ public final class VoidgloomTarget {
 			if (cfg.voidgloomRequiredLevel > 0 && info.level() != cfg.voidgloomRequiredLevel) {
 				continue;
 			}
+			// Boss d'un autre joueur ("Spawned by: autre") : on l'ignore pour ne pas lui voler son boss.
+			if (cfg.onlyOwnBoss && !info.textContains(owner)) {
+				foreign++;
+				continue;
+			}
 			result.add(EnderMan.class.cast(info.entity()));
 		}
-		return new Result(result, mobs, infos.size());
+		return new Result(result, mobs, infos.size(), foreign);
 	}
 }

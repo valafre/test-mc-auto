@@ -101,7 +101,9 @@ public final class EntityInfoResolver {
 		if (entity.hasCustomName()) {
 			candidates.add(NametagParser.parse(entity.getCustomName().getString()));
 		}
+		StringBuilder all = new StringBuilder();
 		for (NametagInfo tag : candidates) {
+			all.append(tag.raw()).append('\n');
 			int score = (tag.hasHealth() ? 4 : 0) + (tag.hasLevel() ? 2 : 0) + (tag.name().isEmpty() ? 0 : 1);
 			if (score > bestScore) {
 				bestScore = score;
@@ -117,6 +119,6 @@ public final class EntityInfoResolver {
 			maxHealth = living.getMaxHealth();
 		}
 		return new EntityInfo(entity, EntityType.getKey(entity.getType()).toString(), name,
-			best.level(), health, maxHealth, entity.position(), best.raw());
+			best.level(), health, maxHealth, entity.position(), best.raw(), all.toString());
 	}
 }

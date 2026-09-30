@@ -45,6 +45,7 @@ public final class VoidgloomModule extends AbstractModule {
 	private int endermenSeen;
 	private int bossesSeen;
 	private int mobsSeen;
+	private int foreignBosses;
 	private boolean targetIsBoss;       // false : Enderman normal farmé pour faire apparaître le boss
 	private int reactionTicks;          // délai de réaction humain avant d'agir sur une nouvelle cible
 	private int bossCheckTimer;
@@ -61,7 +62,8 @@ public final class VoidgloomModule extends AbstractModule {
 			return "en attente : \"" + ModConfig.get().slayerScoreboardKeyword + "\" absent du scoreboard";
 		}
 		String cible = target == null ? " (aucune cible)" : targetIsBoss ? " (cible : BOSS)" : " (cible : Enderman)";
-		return fsm.current() + cible + " | Enderman vus: " + endermenSeen + ", à farmer: " + mobsSeen + ", Voidgloom: " + bossesSeen;
+		return fsm.current() + cible + " | Enderman vus: " + endermenSeen + ", à farmer: " + mobsSeen + ", Voidgloom: " + bossesSeen
+			+ (foreignBosses > 0 ? " (+" + foreignBosses + " d'autres joueurs ignorés)" : "");
 	}
 
 	@Override
@@ -187,6 +189,7 @@ public final class VoidgloomModule extends AbstractModule {
 		endermenSeen = result.endermen();
 		bossesSeen = result.bosses().size();
 		mobsSeen = result.mobs().size();
+		foreignBosses = result.foreignBosses();
 	}
 
 	/** Pendant le farm : si un Voidgloom apparaît, on abandonne l'Enderman courant pour le boss. */

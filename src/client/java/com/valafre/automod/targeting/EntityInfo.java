@@ -10,7 +10,7 @@ import java.util.Locale;
  * {@code level}, {@code health} et {@code maxHealth} valent -1 quand ils sont inconnus.
  */
 public record EntityInfo(Entity entity, String typeId, String name, int level,
-						 double health, double maxHealth, Vec3 position, String rawNametag) {
+						 double health, double maxHealth, Vec3 position, String rawNametag, String allText) {
 
 	public boolean hasLevel() {
 		return level >= 0;
@@ -23,6 +23,11 @@ public record EntityInfo(Entity entity, String typeId, String name, int level,
 	/** Le nom (sans niveau ni vie) contient-il {@code text} ? Insensible à la casse. */
 	public boolean nameContains(String text) {
 		return name.toLowerCase(Locale.ROOT).contains(text.toLowerCase(Locale.ROOT));
+	}
+
+	/** Un des nametags rattachés (ex. "Spawned by: pseudo") contient-il {@code text} ? Insensible à la casse. */
+	public boolean textContains(String text) {
+		return allText.toLowerCase(Locale.ROOT).contains(text.toLowerCase(Locale.ROOT));
 	}
 
 	@Override

@@ -56,6 +56,8 @@ public final class AutoModScreen extends Screen {
 		y = top;
 		toggle(right, y, colW, "Pos. au-dessus", () -> cfg.allowAbovePosition, () -> cfg.allowAbovePosition = !cfg.allowAbovePosition);
 		y += ROW;
+		toggle(right, y, colW, "Seulement mon boss", () -> cfg.onlyOwnBoss, () -> cfg.onlyOwnBoss = !cfg.onlyOwnBoss);
+		y += ROW;
 		stepper(right, y, colW, "Portée", () -> cfg.attackDistance, v -> cfg.attackDistance = Mth.clamp(v, 2.0, 6.0), 0.25);
 		y += ROW;
 		stepper(right, y, colW, "Approche", () -> cfg.approachDistance,

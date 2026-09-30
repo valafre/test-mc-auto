@@ -38,6 +38,10 @@ public final class ModConfig {
 	public int targetSearchIntervalTicks = 10;
 	/** Sur certains serveurs le nom est porté par un ArmorStand posé sur l'Enderman : on l'accepte aussi. */
 	public boolean allowArmorStandNameplate = true;
+	/** Ne cibler que le boss invoqué par soi (ligne "Spawned by: pseudo" du nametag). */
+	public boolean onlyOwnBoss = true;
+	/** Pseudo du propriétaire ; vide = pseudo du joueur connecté. */
+	public String bossOwnerName = "";
 	public String voidgloomNameKeyword = "voidgloom";
 	/** Niveau exigé du nametag ("[Lv90]") ; 0 = niveau ignoré. */
 	public int voidgloomRequiredLevel = 0;
