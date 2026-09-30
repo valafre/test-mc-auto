@@ -33,6 +33,23 @@ public final class TargetSelector {
 		return best;
 	}
 
+	/** Candidat valide de coût minimal (ex. distance + pénalité d'angle à tourner). */
+	public <T extends Entity> T selectBy(Collection<T> candidates, java.util.function.ToDoubleFunction<T> cost) {
+		T best = null;
+		double bestCost = Double.MAX_VALUE;
+		for (T candidate : candidates) {
+			if (!isValid(candidate)) {
+				continue;
+			}
+			double c = cost.applyAsDouble(candidate);
+			if (c < bestCost) {
+				bestCost = c;
+				best = candidate;
+			}
+		}
+		return best;
+	}
+
 	public static boolean isValid(Entity entity) {
 		return entity != null && entity.isAlive() && !entity.isRemoved();
 	}

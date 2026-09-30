@@ -5,6 +5,7 @@ import com.valafre.automod.core.Framework;
 import com.valafre.automod.core.InspectTool;
 import com.valafre.automod.core.TickManager;
 import com.valafre.automod.gui.AutoModScreen;
+import com.valafre.automod.gui.CameraFrameHook;
 import com.valafre.automod.gui.DiagnosticsHud;
 import com.valafre.automod.modules.slayer.voidgloom.VoidgloomModule;
 import net.fabricmc.api.ClientModInitializer;
@@ -24,6 +25,7 @@ public class AutoModClient implements ClientModInitializer {
 	private KeyMapping panicKey;
 	private KeyMapping inspectKey;
 	private KeyMapping menuKey;
+	private KeyMapping recordKey;
 
 	@Override
 	public void onInitializeClient() {
@@ -43,7 +45,10 @@ public class AutoModClient implements ClientModInitializer {
 		menuKey = KeyMappingHelper.registerKeyMapping(
 			new KeyMapping("key.automod.menu", GLFW.GLFW_KEY_INSERT, category));
 
+		recordKey = KeyMappingHelper.registerKeyMapping(
+			new KeyMapping("key.automod.record_camera", GLFW.GLFW_KEY_PAGE_UP, category));
 		DiagnosticsHud.register(framework);
+		CameraFrameHook.register(framework);
 		new TickManager(framework).register();
 		ClientTickEvents.END_CLIENT_TICK.register(this::handleKeys);
 	}
@@ -51,6 +56,14 @@ public class AutoModClient implements ClientModInitializer {
 	private void handleKeys(Minecraft mc) {
 		while (panicKey.consumeClick()) {
 			framework.safety().panic();
+		}
+		while (recordKey.consumeClick()) {
+			boolean started = framework.recorder().toggle() != null;
+			if (mc.player != null) {
+				mc.player.sendSystemMessage(Component.literal(started
+					? "[AutoMod] Enregistrement caméra démarré : " + framework.recorder().file().getFileName()
+					: "[AutoMod] Enregistrement caméra arrêté : " + framework.recorder().file()));
+			}
 		}
 		while (menuKey.consumeClick()) {
 			mc.setScreen(new AutoModScreen(framework));

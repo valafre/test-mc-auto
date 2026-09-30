@@ -15,13 +15,6 @@ public final class DiagnosticsHud {
 	private DiagnosticsHud() {}
 
 	public static void register(Framework framework) {
-		// Élément appelé à chaque image : fait avancer la rotation en douceur entre deux ticks.
-		HudElementRegistry.addFirst(Identifier.fromNamespaceAndPath("automod", "rotation_frames"), (HudElement) (graphics, delta) -> {
-			Minecraft mc = framework.minecraft();
-			if (mc.player != null) {
-				framework.rotation().frameUpdate(mc.player, delta.getGameTimeDeltaPartialTick(false));
-			}
-		});
 		HudElementRegistry.addLast(Identifier.fromNamespaceAndPath("automod", "diagnostics"),
 			(HudElement) (graphics, delta) -> render(framework, graphics));
 	}

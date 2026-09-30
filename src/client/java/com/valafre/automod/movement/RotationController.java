@@ -2,105 +2,259 @@ package com.valafre.automod.movement;
 
 import com.valafre.automod.config.ModConfig;
 import com.valafre.automod.core.PlayerState;
-import com.valafre.automod.humanize.Humanizer;
+import com.valafre.automod.debug.CameraRecorder;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.util.Mth;
+import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 /**
- * Rotation générique et progressive. Les appelants fournissent un point à regarder ({@link #lookAt}) à chaque tick ;
- * {@link #update} applique UN pas de rotation borné. Si personne ne redemande de point, la rotation automatique s'arrête.
+ * Caméra automatique. Les appelants déposent UNE demande de regard par tick ({@link #lookAt}) ; {@link #update}
+ * la transforme en mouvement.
+ *
+ * <p>Modèle (mode naturel) : un ressort amorti critique sur le vecteur d'erreur (lacet, tangage) :
+ * <ul>
+ *   <li>les deux axes forment UN seul mouvement : même dynamique, donc ils arrivent ensemble ;</li>
+ *   <li>montée et descente progressives (accélération puis décélération), vitesse plafonnée ;</li>
+ *   <li>la durée dépend de la situation : angle à parcourir et taille angulaire de la cible (petite/loin = plus précis = plus long) ;</li>
+ *   <li>la vitesse de la caméra est conservée d'un tick à l'autre, y compris quand la cible change : pas de redémarrage à zéro ;</li>
+ *   <li>zone de tolérance proportionnelle à la taille apparente de la hitbox, avec hystérésis : tant que le viseur est bien
+ *       sur la cible, on ne fait que suivre son mouvement, sans corrections constantes.</li>
+ * </ul>
  */
 public final class RotationController {
 
-	private final Humanizer humanizer;
-	private Vec3 target;
-	private float yawVelocity;
-	private float pitchVelocity;
-	private float pendingYaw;    // pas du tick courant, appliqué progressivement par frameUpdate
+	/** Saut de direction (degrés) au-delà duquel on considère qu'il s'agit d'une nouvelle cible / d'une téléportation. */
+	private static final float RETARGET_JUMP_DEG = 25.0f;
+	private static final float COAST_DECAY = 0.6f;
+	private static final float COAST_MIN = 0.05f;
+
+	private record Gaze(Vec3 point, AABB box, String source) {}
+
+	private final CameraRecorder recorder;
+	private Gaze gaze;
+
+	// Vitesse de la caméra (degrés/tick), conservée entre les ticks.
+	private float vYaw;
+	private float vPitch;
+	// Direction désirée au tick précédent et vitesse angulaire LISSÉE de la cible (anticipation de son mouvement).
+	private boolean hasLast;
+	private float lastDesYaw;
+	private float lastDesPitch;
+	private float targetVYaw;
+	private float targetVPitch;
+	private boolean locked;
+
+	// Pas du tick courant, appliqué progressivement par frameUpdate (une fois par image rendue).
+	private float pendingYaw;
 	private float pendingPitch;
-	private float applied = 1.0f; // fraction du pas déjà appliquée (1 = rien en attente)
+	private float applied = 1.0f;
 
-	public RotationController(Humanizer humanizer) {
-		this.humanizer = humanizer;
+	public RotationController(CameraRecorder recorder) {
+		this.recorder = recorder;
 	}
 
 	// ========================================
-	// ROTATION
+	// DEMANDES
 	// ========================================
 
-	/** Demande de regarder {@code point} (monde). À rappeler chaque tick tant que la rotation doit durer. */
+	/** Regarder {@code point} (taille de cible inconnue). */
 	public void lookAt(Vec3 point) {
-		target = point;
+		gaze = new Gaze(point, null, "OTHER");
 	}
 
+	/**
+	 * Regarder {@code point}, qui appartient à la hitbox {@code box} (sert à la taille apparente et à la tolérance).
+	 * @param source étiquette (ENEMY, PATH...) pour l'enregistreur de debug
+	 */
+	public void lookAt(Vec3 point, AABB box, String source) {
+		gaze = new Gaze(point, box, source);
+	}
+
+	/** Plus de demande : la caméra finit son mouvement en décélérant (pas d'arrêt sec). */
 	public void cancel() {
-		target = null;
-		yawVelocity = 0;
-		pitchVelocity = 0;
+		gaze = null;
+	}
+
+	/** Remise à zéro complète (arrêt d'urgence). */
+	public void reset() {
+		gaze = null;
+		vYaw = 0;
+		vPitch = 0;
+		hasLast = false;
+		locked = false;
 		pendingYaw = 0;
 		pendingPitch = 0;
 		applied = 1.0f;
 	}
 
 	public boolean isActive() {
-		return target != null;
+		return gaze != null;
 	}
 
-	/** Applique un pas de rotation vers la cible demandée ce tick, puis oublie la demande. */
+	// ========================================
+	// MISE À JOUR (une fois par tick)
+	// ========================================
+
 	public void update(PlayerState state) {
 		flushPending(state.player()); // le pas du tick précédent doit être complet avant de calculer l'écart restant
-		if (target == null) {
-			yawVelocity = 0;   // plus de demande : la prochaine rotation repart de zéro (accélération progressive)
-			pitchVelocity = 0;
+		ModConfig cfg = ModConfig.get();
+		LocalPlayer player = state.player();
+
+		if (gaze == null) {
+			coast();
+			hasLast = false;
+			locked = false;
 			return;
 		}
-		LocalPlayer player = state.player();
+
 		Vec3 eye = state.eyePosition();
 		float yaw = player.getYRot();
 		float pitch = player.getXRot();
+		Vec3 point = gaze.point();
+		float errYaw = yawDelta(eye, point, yaw);
+		float errPitch = pitchDelta(eye, point, pitch);
+		double dist = Math.max(0.3, eye.distanceTo(point));
 
-		ModConfig cfg = ModConfig.get();
-		float yawDelta = yawDelta(eye, target, yaw);
-		float pitchDelta = pitchDelta(eye, target, pitch);
-
-		float factor = humanizer.rotationSpeedFactor();
-		float yawStep = step(yawDelta, cfg.minYawSpeed * factor, cfg.maxYawSpeed * factor, cfg.rotationEaseFactor);
-		float pitchStep = step(pitchDelta, cfg.minPitchSpeed * factor, cfg.maxPitchSpeed * factor, cfg.rotationEaseFactor);
+		float stepYaw;
+		float stepPitch;
+		float sizeYaw = 3.0f;
 		if (cfg.humanize) {
-			// La vitesse réelle rattrape la vitesse voulue avec une accélération bornée : démarrage et arrêt progressifs.
-			yawVelocity = approach(yawVelocity, yawStep, Math.max(1.5f, cfg.maxYawSpeed * 0.6f));
-			pitchVelocity = approach(pitchVelocity, pitchStep, Math.max(1.2f, cfg.maxPitchSpeed * 0.6f));
-			yawStep = limit(yawVelocity, yawDelta);
-			pitchStep = limit(pitchVelocity, pitchDelta);
-		}
-		float newYaw = yaw + yawStep;
-		float newPitch = pitch + pitchStep;
+			float desYaw = computeYaw(eye, point);
+			float desPitch = computePitch(eye, point);
+			updateTargetMotion(desYaw, desPitch);
 
-		if (cfg.smoothFrameRotation) {
-			pendingYaw = yawStep;
-			pendingPitch = pitchStep;
-			applied = 0.0f;
+			// Taille angulaire apparente de la cible : demi-largeur en lacet, demi-hauteur de la bande haute en tangage.
+			sizeYaw = gaze.box() == null ? 3.0f
+				: Mth.clamp((float) Math.toDegrees(Math.atan2(gaze.box().getXsize() * 0.5, dist)), 1.5f, 20.0f);
+			float sizePitch = gaze.box() == null ? 4.0f
+				: Mth.clamp((float) Math.toDegrees(Math.atan2(gaze.box().getYsize() * 0.25, dist)), 2.0f, 25.0f);
+
+			// Zone de tolérance avec hystérésis : dedans, on suit seulement le mouvement de la cible.
+			float normalized = Math.max(Math.abs(errYaw) / sizeYaw, Math.abs(errPitch) / sizePitch);
+			if (!locked && normalized < cfg.camLockIn) {
+				locked = true;
+			} else if (locked && normalized > cfg.camLockOut) {
+				locked = false;
+			}
+
+			// Durée du mouvement selon la situation (angle à parcourir / précision demandée) -> pulsation du ressort.
+			double angular = Math.hypot(errYaw * Math.cos(Math.toRadians(pitch)), errPitch);
+			double settle = cfg.camMinSettleTicks + cfg.camSettleSlope * log2(1.0 + angular / sizeYaw);
+			float omega = (float) (4.0 / settle);
+			float follow = locked ? cfg.camLockedFollow : 1.0f; // part du mouvement de la cible reproduite
+			float exYaw = locked ? 0.0f : errYaw;
+			float exPitch = locked ? 0.0f : errPitch;
+
+			float moveYaw = 0;
+			float movePitch = 0;
+			for (int i = 0; i < 2; i++) { // 2 sous-pas : intégration stable
+				float dvYaw = (omega * omega * exYaw - 2 * omega * (vYaw - follow * targetVYaw)) * 0.5f;
+				float dvPitch = (omega * omega * exPitch - 2 * omega * (vPitch - follow * targetVPitch)) * 0.5f;
+				// Accélération plafonnée (sur la norme, donc les deux axes restent cohérents) : pas de démarrage brutal.
+				float dv = (float) Math.hypot(dvYaw, dvPitch);
+				float maxDv = cfg.camMaxAccelDeg * 0.5f;
+				if (dv > maxDv) {
+					dvYaw *= maxDv / dv;
+					dvPitch *= maxDv / dv;
+				}
+				vYaw += dvYaw;
+				vPitch += dvPitch;
+				float speed = (float) Math.hypot(vYaw, vPitch);
+				if (speed > cfg.camPeakSpeedDeg) { // plafond sur la norme : les deux axes restent cohérents
+					float scale = cfg.camPeakSpeedDeg / speed;
+					vYaw *= scale;
+					vPitch *= scale;
+				}
+				moveYaw += vYaw * 0.5f;
+				movePitch += vPitch * 0.5f;
+			}
+			// Jamais au-delà de la cible quand on s'en approche.
+			if (!locked && Math.signum(moveYaw) == Math.signum(errYaw) && Math.abs(moveYaw) > Math.abs(errYaw)) {
+				moveYaw = errYaw;
+				vYaw = errYaw;
+			}
+			if (!locked && Math.signum(movePitch) == Math.signum(errPitch) && Math.abs(movePitch) > Math.abs(errPitch)) {
+				movePitch = errPitch;
+				vPitch = errPitch;
+			}
+			stepYaw = moveYaw;
+			stepPitch = movePitch;
 		} else {
-			player.setYRot(newYaw);
-			player.setXRot(Mth.clamp(newPitch, -90.0f, 90.0f));
+			// Mode direct (humanisation désactivée) : pas proportionnel borné, sans état.
+			stepYaw = directStep(errYaw, cfg.minYawSpeed, cfg.maxYawSpeed, cfg.rotationEaseFactor);
+			stepPitch = directStep(errPitch, cfg.minPitchSpeed, cfg.maxPitchSpeed, cfg.rotationEaseFactor);
 		}
-		target = null;
+
+		apply(player, stepYaw, stepPitch, cfg.smoothFrameRotation);
+		recorder.record(gaze.source(), yaw, pitch, errYaw, errPitch, dist, sizeYaw, locked, vYaw, vPitch, stepYaw, stepPitch);
+		gaze = null;
 	}
 
-	/**
-	 * Pas de rotation pour un écart donné : proportionnel à l'écart (grand écart = rapide, petit écart = lent),
-	 * borné entre la vitesse min (pour converger) et max (pour rester fluide), sans jamais dépasser l'écart restant.
-	 */
-	private static float step(float delta, float minSpeed, float maxSpeed, float easeFactor) {
+	/** Vitesse angulaire apparente de la cible (lissée) ; remise à zéro quand la direction saute (nouvelle cible, téléportation). */
+	private void updateTargetMotion(float desYaw, float desPitch) {
+		if (hasLast) {
+			float dy = Mth.wrapDegrees(desYaw - lastDesYaw);
+			float dp = desPitch - lastDesPitch;
+			if (Math.hypot(dy, dp) > RETARGET_JUMP_DEG) {
+				targetVYaw = 0;
+				targetVPitch = 0;
+				locked = false;
+			} else {
+				targetVYaw += (dy - targetVYaw) * 0.5f;
+				targetVPitch += (dp - targetVPitch) * 0.5f;
+			}
+		}
+		lastDesYaw = desYaw;
+		lastDesPitch = desPitch;
+		hasLast = true;
+	}
+
+	/** Sans demande, la caméra continue sur sa lancée en ralentissant, puis s'arrête. */
+	private void coast() {
+		vYaw *= COAST_DECAY;
+		vPitch *= COAST_DECAY;
+		if (Math.hypot(vYaw, vPitch) < COAST_MIN) {
+			vYaw = 0;
+			vPitch = 0;
+		}
+		targetVYaw = 0;
+		targetVPitch = 0;
+		if (vYaw != 0 || vPitch != 0) {
+			pendingYaw = vYaw;
+			pendingPitch = vPitch;
+			applied = 0.0f;
+		}
+	}
+
+	private void apply(LocalPlayer player, float stepYaw, float stepPitch, boolean perFrame) {
+		if (perFrame) {
+			pendingYaw = stepYaw;
+			pendingPitch = stepPitch;
+			applied = 0.0f;
+		} else {
+			rotateBy(player, stepYaw, stepPitch);
+		}
+	}
+
+	private static float directStep(float delta, float minSpeed, float maxSpeed, float ease) {
 		float abs = Math.abs(delta);
-		float speed = Mth.clamp(abs * easeFactor, minSpeed, maxSpeed);
+		float speed = Mth.clamp(abs * ease, minSpeed, maxSpeed);
 		return Math.copySign(Math.min(abs, speed), delta);
 	}
 
+	private static double log2(double x) {
+		return Math.log(x) / Math.log(2.0);
+	}
+
+	// ========================================
+	// APPLICATION PAR IMAGE
+	// ========================================
+
 	/**
-	 * Appelé à chaque IMAGE rendue (pas seulement chaque tick) : applique la part du pas du tick correspondant à la
-	 * progression {@code partialTick} (0..1). yRotO/xRotO suivent pour que l'interpolation de la caméra reste exacte.
+	 * Appelé à chaque IMAGE rendue (événement de rendu du monde, donc même si l'interface est masquée) : applique la part
+	 * du pas du tick correspondant à la progression {@code partialTick} (0..1). yRotO/xRotO suivent pour que
+	 * l'interpolation de la caméra reste exacte.
 	 */
 	public void frameUpdate(LocalPlayer player, float partialTick) {
 		float progress = Mth.clamp(partialTick, 0.0f, 1.0f);
@@ -125,15 +279,6 @@ public final class RotationController {
 		player.setXRot(Mth.clamp(player.getXRot() + pitch, -90.0f, 90.0f));
 		player.yRotO = player.getYRot();
 		player.xRotO = player.getXRot();
-	}
-
-	private static float approach(float current, float wanted, float maxChange) {
-		return current + Mth.clamp(wanted - current, -maxChange, maxChange);
-	}
-
-	/** Empêche de dépasser la cible quand la vitesse va dans le bon sens. */
-	private static float limit(float velocity, float delta) {
-		return Math.signum(velocity) == Math.signum(delta) && Math.abs(velocity) > Math.abs(delta) ? delta : velocity;
 	}
 
 	// ========================================

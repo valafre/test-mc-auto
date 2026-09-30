@@ -23,6 +23,11 @@ public final class CombatController {
 	private final java.util.Random rng = new java.util.Random();
 	private int nextInterval = 1;   // ticks à attendre avant le prochain coup
 	private double tickDebt;        // reste fractionnaire reporté : garantit le CPS moyen visé
+	private long tickStamp;
+	private long losStamp = -1;
+	private Entity losTarget;
+	private boolean losStable = true;
+	private int losRun;
 	private int ticksSinceAttack = Integer.MAX_VALUE / 2;
 
 	public CombatController(Minecraft mc) {
@@ -31,6 +36,7 @@ public final class CombatController {
 
 	/** À appeler une fois par tick pour faire avancer le cooldown. */
 	public void tick() {
+		tickStamp++;
 		if (ticksSinceAttack < Integer.MAX_VALUE / 2) {
 			ticksSinceAttack++;
 		}
@@ -40,6 +46,8 @@ public final class CombatController {
 		ticksSinceAttack = Integer.MAX_VALUE / 2;
 		nextInterval = 1;
 		tickDebt = 0;
+		losTarget = null;
+		losStamp = -1;
 	}
 
 	// ========================================
@@ -67,6 +75,36 @@ public final class CombatController {
 		Vec3 center = box.getCenter();
 		return isVisible(state, eye, center)
 			|| isVisible(state, eye, new Vec3(center.x, box.minY + box.getYsize() * 0.9, center.z));
+	}
+
+	private static final int LOS_LOSE_TICKS = 4;
+	private static final int LOS_REGAIN_TICKS = 2;
+
+	/**
+	 * Ligne de vue STABILISÉE pour les décisions (où regarder, poursuivre ou contourner) : ne bascule qu'après
+	 * {@code LOS_LOSE_TICKS} ticks sans vue ou {@code LOS_REGAIN_TICKS} ticks de vue retrouvée. Évite que la caméra alterne
+	 * entre l'ennemi et le chemin quand la ligne de vue clignote près d'un coin. Évaluée une seule fois par tick.
+	 * (L'attaque, elle, utilise la ligne de vue instantanée.)
+	 */
+	public boolean hasStableLineOfSight(PlayerState state, Entity target) {
+		if (losStamp == tickStamp && losTarget == target) {
+			return losStable;
+		}
+		boolean raw = hasLineOfSight(state, target);
+		if (losTarget != target) {
+			losTarget = target;
+			losStable = raw;
+			losRun = 0;
+		} else if (raw != losStable) {
+			if (++losRun >= (raw ? LOS_REGAIN_TICKS : LOS_LOSE_TICKS)) {
+				losStable = raw;
+				losRun = 0;
+			}
+		} else {
+			losRun = 0;
+		}
+		losStamp = tickStamp;
+		return losStable;
 	}
 
 	private static boolean isVisible(PlayerState state, Vec3 eye, Vec3 to) {

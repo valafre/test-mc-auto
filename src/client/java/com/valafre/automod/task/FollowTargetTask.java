@@ -32,8 +32,11 @@ public final class FollowTargetTask extends Task {
 			return TaskStatus.FAILED;
 		}
 		TargetInfo info = TargetInfo.of(f.player(), target);
-		f.rotation().lookAt(f.humanizer().adjustAim(target, info.aimPoint()));
-		chase.step(f, owner(), target, info);
+		boolean sight = f.combat().hasStableLineOfSight(f.player(), target);
+		if (sight) { // sans ligne de vue, le mouvement oriente la caméra vers le chemin (une seule source de regard)
+			f.rotation().lookAt(f.humanizer().aim(target, f.player()), target.getBoundingBox(), "ENEMY");
+		}
+		chase.step(f, owner(), target, info, sight);
 		return TaskStatus.RUNNING;
 	}
 }

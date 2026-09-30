@@ -101,7 +101,7 @@ public final class MovementController {
 
 		if (controlLook) {
 			// Regard à hauteur des yeux pour garder un pitch neutre pendant la marche.
-			rotation.lookAt(new Vec3(waypoint.x, state.eyePosition().y, waypoint.z));
+			rotation.lookAt(new Vec3(waypoint.x, state.eyePosition().y, waypoint.z), null, "PATH");
 		}
 		applyKeys(state, owner, waypoint, horizontal, stopDistance, cfg);
 		return MoveStatus.MOVING;

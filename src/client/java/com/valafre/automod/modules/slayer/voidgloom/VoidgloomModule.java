@@ -9,9 +9,11 @@ import com.valafre.automod.core.StateMachine;
 import com.valafre.automod.core.TaskPriority;
 import com.valafre.automod.core.TaskStatus;
 import com.valafre.automod.movement.PositionController;
+import com.valafre.automod.movement.RotationController;
 import com.valafre.automod.targeting.TargetInfo;
 import com.valafre.automod.targeting.TargetSelector;
 import com.valafre.automod.task.AttackTargetTask;
+import com.valafre.automod.task.LookAtTask;
 import com.valafre.automod.task.MoveToPositionTask;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.monster.EnderMan;
@@ -204,7 +206,7 @@ public final class VoidgloomModule extends AbstractModule {
 		double range = cfg.farmMobs ? Math.max(cfg.targetSearchRange, cfg.farmSearchRange) : cfg.targetSearchRange;
 		// Le boss est toujours prioritaire ; sinon on farme l'Enderman normal le plus proche pour le faire apparaître.
 		EnderMan boss = f.targetSelector().select(result.bosses(), ps.position(), null, range);
-		EnderMan picked = boss != null ? boss : f.targetSelector().select(reachable(result.mobs()), ps.position(), null, range);
+		EnderMan picked = boss != null ? boss : f.targetSelector().selectBy(reachable(result.mobs()), m -> approachCost(ps, m));
 		if (picked != null) {
 			target = picked;
 			noLosTicks = 0;
@@ -213,7 +215,7 @@ public final class VoidgloomModule extends AbstractModule {
 		stuckAnchor = null;
 		stuckTicks = 0;
 			targetIsBoss = boss != null;
-			reactionTicks = f.humanizer().nextReactionDelay();
+			reactionTicks = transitionDelay(f, picked);
 			Debug.log("Voidgloom", () -> (targetIsBoss ? "Boss trouvé : " : "Enderman à farmer : ")
 				+ f.entityInfo().resolve(ps.level(), picked));
 			fsm.transition(VoidgloomState.FOLLOWING_TARGET);
@@ -234,7 +236,7 @@ public final class VoidgloomModule extends AbstractModule {
 		}
 		retargetAccum = 0;
 		PlayerState ps = f.player();
-		if (TargetInfo.of(ps, target).distance() <= cfg.attackDistance && f.combat().hasLineOfSight(ps, target)) {
+		if (TargetInfo.of(ps, target).distance() <= cfg.attackDistance && f.combat().hasStableLineOfSight(ps, target)) {
 			return false; // déjà au contact : on ne lâche pas la cible qu'on frappe
 		}
 		EnderMan nearest = f.targetSelector().select(reachable(result.mobs()), ps.position(), null,
@@ -285,7 +287,7 @@ public final class VoidgloomModule extends AbstractModule {
 		stopActions(f);
 		target = boss;
 		targetIsBoss = true;
-		reactionTicks = f.humanizer().nextReactionDelay();
+		reactionTicks = transitionDelay(f, boss);
 		fsm.transition(VoidgloomState.FOLLOWING_TARGET);
 		return true;
 	}
@@ -309,8 +311,12 @@ public final class VoidgloomModule extends AbstractModule {
 		if (!targetIsBoss && switchToBossIfSpawned(f)) {
 			return;
 		}
-		if (reactionTicks > 0) { // réaction humaine : petite pause avant d'agir sur une nouvelle cible
+		if (reactionTicks > 0) { // transition : la caméra s'oriente vers la nouvelle cible avant l'engagement
 			reactionTicks--;
+			if (!f.tasks().isRunning(LookAtTask.class)) {
+				EnderMan t = target;
+				f.tasks().submit(f, ID, new LookAtTask(TaskPriority.FOLLOW, () -> f.humanizer().aim(t, f.player())));
+			}
 			return;
 		}
 
@@ -318,7 +324,7 @@ public final class VoidgloomModule extends AbstractModule {
 		BlockPos found = targetIsBoss ? mechanics.poll(ps) : null;
 
 		// Un Enderman qu'on ne voit plus depuis trop longtemps (mur, autre plateforme) est abandonné pour un autre.
-		noLosTicks = f.combat().hasLineOfSight(ps, target) ? 0 : noLosTicks + 1;
+		noLosTicks = f.combat().hasStableLineOfSight(ps, target) ? 0 : noLosTicks + 1;
 		// Enderman normal : 3 s après le premier contact sans l'avoir tué (ou jamais atteint), on en prend un autre.
 		// Le boss, lui, n'est JAMAIS abandonné.
 		acquiredTicks++;
@@ -395,6 +401,26 @@ public final class VoidgloomModule extends AbstractModule {
 		double dx = p.x - (pos.getX() + 0.5);
 		double dz = p.z - (pos.getZ() + 0.5);
 		return dx * dx + dz * dz <= tolerance * tolerance && Math.abs(p.y - pos.getY()) < 1.5;
+	}
+
+	/**
+	 * Attente avant d'engager une nouvelle cible, proportionnelle à l'angle dont il faut tourner (1 tick par 45 degrés, plafonné) :
+	 * nulle si la cible est déjà dans l'axe, plus longue pour un demi-tour. Aucun hasard : elle vient de la situation.
+	 */
+	private int transitionDelay(Framework f, net.minecraft.world.entity.Entity entity) {
+		ModConfig cfg = ModConfig.get();
+		if (!cfg.humanize) {
+			return 0;
+		}
+		PlayerState ps = f.player();
+		float angle = Math.abs(RotationController.yawDelta(ps.eyePosition(), entity.position(), ps.yaw()));
+		return Math.min(cfg.transitionMaxTicks, (int) (angle / 45.0f));
+	}
+
+	/** Coût d'une cible candidate : distance + petite pénalité par degré à tourner (on préfère celle qui est dans l'axe). */
+	private static double approachCost(PlayerState ps, net.minecraft.world.entity.Entity entity) {
+		float angle = Math.abs(RotationController.yawDelta(ps.eyePosition(), entity.position(), ps.yaw()));
+		return ps.position().distanceTo(entity.position()) + 0.02 * angle;
 	}
 
 	private boolean isRepositioning() {
@@ -485,7 +511,7 @@ public final class VoidgloomModule extends AbstractModule {
 			f.tasks().submit(f, ID, attackTask);
 		}
 		TargetInfo info = TargetInfo.of(ps, target);
-		boolean inRange = info.distance() <= cfg.attackDistance && f.combat().hasLineOfSight(ps, target);
+		boolean inRange = info.distance() <= cfg.attackDistance && f.combat().hasStableLineOfSight(ps, target);
 		boolean ready = inRange && f.combat().isAligned(ps, target);
 		fsm.transition(ready ? VoidgloomState.ATTACKING : inRange ? VoidgloomState.ALIGNING : VoidgloomState.FOLLOWING_TARGET);
 	}

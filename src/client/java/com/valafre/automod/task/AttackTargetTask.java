@@ -4,21 +4,25 @@ import com.valafre.automod.config.ModConfig;
 import com.valafre.automod.core.Framework;
 import com.valafre.automod.core.Task;
 import com.valafre.automod.core.TaskStatus;
+import com.valafre.automod.input.InputController.Key;
 import com.valafre.automod.targeting.TargetInfo;
 import com.valafre.automod.targeting.TargetSelector;
 import net.minecraft.world.entity.LivingEntity;
-
-import java.util.Random;
+import net.minecraft.world.phys.Vec3;
 
 /**
- * Tâche de combat CONTINUE : poursuit la cible, la contourne en strafe et laisse le CombatController frapper dès que
- * portée, ligne de vue, viseur et cadence le permettent. Le joueur ne s'arrête jamais pour taper. Ne se termine que si
- * la cible devient invalide ; le module n'a donc pas à alterner suivi/attaque (ce qui relâchait les touches à chaque coup).
+ * Tâche de combat CONTINUE : poursuit la cible en avançant et laisse le CombatController frapper dès que portée, ligne de
+ * vue, viseur et cadence le permettent. Le joueur ne s'arrête jamais pour taper. Ne se termine que si la cible devient
+ * invalide ; le module n'a donc pas à alterner suivi/attaque.
+ *
+ * <p>Regard : UNE seule source par tick. Avec ligne de vue stable on regarde l'ennemi ; sans ligne de vue, c'est le
+ * mouvement (contournement) qui oriente la caméra vers le prochain point du chemin. La ligne de vue est stabilisée
+ * (hystérésis) pour que la caméra ne bascule pas d'une source à l'autre près d'un coin de mur.
  */
 public final class AttackTargetTask extends Task {
 
-	/** Au-delà de approachDistance + cette marge, on se contente de poursuivre (pas de strafe). */
-	private static final double STRAFE_ZONE_MARGIN = 1.0;
+	/** Au-delà de approachDistance + cette marge, on se contente de poursuivre (sans logique de distance fine). */
+	private static final double CLOSE_ZONE_MARGIN = 1.0;
 	/** Reculer seulement si on est vraiment collé dans la cible. */
 	private static final double CLOSE_BACK_DISTANCE = 0.8;
 
@@ -26,11 +30,6 @@ public final class AttackTargetTask extends Task {
 	private final boolean holdPosition;
 	private final boolean sneak;
 	private final Chase chase = new Chase();
-	private final Random rng = new Random();
-	private int strafeDir = 1;
-	private int switchIn;
-	private int burstLeft;     // ticks restants du petit pas de côté en cours
-	private int nextBurstIn;   // ticks avant le prochain petit pas de côté
 
 	/** @param sneak true : reste accroupi pendant toute la tâche (combat contre le boss)
 	 *  @param holdPosition true : le joueur garde sa position (imposée par une mécanique), vise et frappe sans bouger */
@@ -39,8 +38,6 @@ public final class AttackTargetTask extends Task {
 		this.target = target;
 		this.holdPosition = holdPosition;
 		this.sneak = sneak;
-		this.strafeDir = rng.nextBoolean() ? 1 : -1;
-		this.nextBurstIn = 30 + rng.nextInt(60);
 	}
 
 	@Override
@@ -55,64 +52,30 @@ public final class AttackTargetTask extends Task {
 		}
 		ModConfig cfg = ModConfig.get();
 		TargetInfo info = TargetInfo.of(f.player(), target);
-		f.rotation().lookAt(f.humanizer().adjustAim(target, info.aimPoint()));
+		boolean sight = f.combat().hasStableLineOfSight(f.player(), target);
+
+		// Regard : l'ennemi si on le voit (ou si on garde la position), sinon le mouvement oriente vers le chemin.
+		Vec3 aim = f.humanizer().aim(target, f.player());
+		if (sight || holdPosition) {
+			f.rotation().lookAt(aim, target.getBoundingBox(), "ENEMY");
+		}
 
 		if (!holdPosition) {
-			boolean inStrafeZone = info.distance() <= cfg.approachDistance + STRAFE_ZONE_MARGIN
-				&& f.combat().hasLineOfSight(f.player(), target);
-			if (inStrafeZone && cfg.strafeInCombat) {
-				strafe(f, cfg, info);
-			} else if (inStrafeZone) {
-				// Sans strafe : on avance vers la cible en continu (pas d'arrêt pour frapper), sans balayer l'écran.
-				f.movement().combatMove(f.player(), owner(), info.distance(), CLOSE_BACK_DISTANCE, cfg.combatMinDistance,
-					occasionalSide(cfg));
+			boolean close = sight && info.distance() <= cfg.approachDistance + CLOSE_ZONE_MARGIN;
+			if (close) {
+				// Au contact : on avance en continu vers la cible (pas d'arrêt pour frapper), sans balayer l'écran.
+				f.movement().combatMove(f.player(), owner(), info.distance(), CLOSE_BACK_DISTANCE, cfg.combatMinDistance, 0);
 			} else {
-				chase.step(f, owner(), target, info); // trop loin ou sans ligne de vue : on rejoint / contourne
+				chase.step(f, owner(), target, info, sight); // trop loin ou sans ligne de vue : on rejoint / contourne
 			}
 		}
 		if (sneak) {
-			f.input().request(owner(), com.valafre.automod.input.InputController.Key.SNEAK, true);
+			f.input().request(owner(), Key.SNEAK, true);
 		}
 		f.items().equip(f.player(), cfg.weaponKeyword);
 		if (!f.items().isBusy()) { // un objet utilitaire (Wand/Orb) est en main ce tick : on n'attaque pas avec
 			f.combat().tryAttack(f.player(), target);
 		}
 		return TaskStatus.RUNNING;
-	}
-
-	/**
-	 * Petit pas de côté occasionnel (4 à 8 ticks, toutes les 3 à 7 s environ, sens aléatoire) pour casser la ligne droite.
-	 * @return -1 / +1 pendant un pas de côté, 0 sinon
-	 */
-	private int occasionalSide(ModConfig cfg) {
-		if (!cfg.humanize || !cfg.occasionalStrafe) {
-			return 0;
-		}
-		if (burstLeft > 0) {
-			burstLeft--;
-			return strafeDir;
-		}
-		if (--nextBurstIn <= 0) {
-			burstLeft = 4 + rng.nextInt(5);
-			strafeDir = rng.nextBoolean() ? 1 : -1;
-			int min = Math.max(1, cfg.occasionalStrafeMinTicks);
-			int max = Math.max(min, cfg.occasionalStrafeMaxTicks);
-			nextBurstIn = min + rng.nextInt(max - min + 1);
-		}
-		return 0;
-	}
-
-	/** Mouvement continu autour de la cible ; le sens change de temps en temps et s'inverse devant un mur ou un vide. */
-	private void strafe(Framework f, ModConfig cfg, TargetInfo info) {
-		if (--switchIn <= 0) {
-			strafeDir = -strafeDir;
-			switchIn = 15 + rng.nextInt(30);
-		}
-		boolean sideOk = f.movement().combatMove(f.player(), owner(), info.distance(),
-			cfg.combatMinDistance, cfg.approachDistance, strafeDir);
-		if (!sideOk) {
-			strafeDir = -strafeDir;
-			switchIn = 15 + rng.nextInt(30);
-		}
 	}
 }

@@ -20,7 +20,7 @@ public final class ModConfig {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger("automod");
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-	private static final int CURRENT_VERSION = 7;
+	private static final int CURRENT_VERSION = 8;
 	private static ModConfig instance = new ModConfig();
 
 	/** Sert à migrer les anciens fichiers de config dont les valeurs par défaut ont changé. */
@@ -90,16 +90,10 @@ public final class ModConfig {
 	public boolean humanize = true;
 	/** La visée reste dans la partie HAUTE de la hitbox : à partir de cette fraction de la hauteur (0.55 = les 45 % du haut). */
 	public double aimBandMinFraction = 0.55;
-	/** Dérive LATÉRALE du point visé (fraction de la largeur de la hitbox) ; 0 = pas de balayage gauche/droite. */
-	public double aimOffsetFraction = 0.0;
 	/** Anticipation : on vise la position de la cible dans X ticks (selon sa vitesse) pour ne pas être en retard sur une cible mobile. */
 	public double aimLeadTicks = 2.0;
 	/** Marge ajoutée à la hitbox pour décider qu'on "est dessus" (le serveur ne vérifie que la distance). */
 	public double hitboxMargin = 0.15;
-	/** Variation (+/-) de la vitesse de rotation propre à chaque cible. */
-	public float rotationSpeedVariation = 0.2f;
-	public int reactionDelayMinTicks = 0;
-	public int reactionDelayMaxTicks = 2;
 
 	// ========================================
 	// DISTANCES
@@ -124,6 +118,21 @@ public final class ModConfig {
 	public float rotationEaseFactor = 0.45f;
 	/** Étale chaque pas de rotation sur les images du tick (caméra fluide à haut FPS au lieu de 20 sauts/s). */
 	public boolean smoothFrameRotation = true;
+	/** Caméra naturelle : vitesse angulaire maximale (degrés/tick) ; 14 = environ 280 degrés/s en crête. */
+	public float camPeakSpeedDeg = 14.0f;
+	/** Variation maximale de la vitesse de la caméra par tick (degrés/tick²) : démarrage et arrêt progressifs, jamais brusques. */
+	public float camMaxAccelDeg = 5.0f;
+	/** Durée minimale (ticks) d'un mouvement de caméra, même pour un tout petit angle. */
+	public float camMinSettleTicks = 2.0f;
+	/** Ticks ajoutés par doublement de (angle / taille apparente de la cible) : grand angle ou petite cible = plus long. */
+	public float camSettleSlope = 1.2f;
+	/** Zone de tolérance (fraction de la taille apparente de la cible) : on y entre sous camLockIn, on en sort au-dessus de camLockOut. */
+	public float camLockIn = 0.3f;
+	public float camLockOut = 0.7f;
+	/** Dans la zone de tolérance, part du mouvement de la cible qui est reproduite (suivi sans corrections). */
+	public float camLockedFollow = 0.7f;
+	/** Attente maximale (ticks) avant d'engager une nouvelle cible ; proportionnelle à l'angle à tourner (1 tick par 45 degrés). */
+	public int transitionMaxTicks = 5;
 	public float alignToleranceYaw = 6.0f;
 	public float alignTolerancePitch = 8.0f;
 
@@ -140,12 +149,6 @@ public final class ModConfig {
 	// MOUVEMENT / PATHFINDING
 	// ========================================
 	public boolean useSprint = true;
-	/** Strafe gauche/droite autour de la cible (fait balayer l'écran). Désactivé : en combat on avance seulement vers la cible. */
-	public boolean strafeInCombat = false;
-	/** Petits pas de côté occasionnels (quelques ticks, toutes les 3 à 7 s environ) pour un mouvement moins mécanique. Avec "Humaniser". */
-	public boolean occasionalStrafe = true;
-	public int occasionalStrafeMinTicks = 60;
-	public int occasionalStrafeMaxTicks = 140;
 	/** Sneak (accroupi) pendant le combat contre le boss. Ignoré si l'option vanilla "sneak en bascule" est active. */
 	public boolean sneakOnBoss = true;
 	/** Enderman normal : abandonné si toujours en vie X ticks après le premier contact (portée + ligne de vue). Jamais pour le boss. */
@@ -229,38 +232,26 @@ public final class ModConfig {
 		save(); // réécrit le fichier pour y ajouter les nouveaux champs
 	}
 
-	/** v2 : enchaînement des cibles plus rapide et plus de blocage par la force d'attaque vanilla (nécessaire pour 10-13 CPS). */
+	/**
+	 * Migre les anciens fichiers de config quand des valeurs par défaut changent. Les versions successives ont, entre autres :
+	 * supprimé le blocage par la force d'attaque vanilla (nécessaire pour 10-13 CPS), accéléré l'enchaînement des cibles,
+	 * élargi la détection du beacon et désactivé le strafe continu. La v8 passe à la caméra naturelle et retire le hasard.
+	 */
 	private static void migrate() {
 		ModConfig c = instance;
 		if (c.configVersion < 2) {
-			c.reactionDelayMinTicks = 1;
-			c.reactionDelayMaxTicks = 5;
-			c.idleSearchIntervalTicks = 2;
 			c.minAttackStrength = 0.0f;
 		}
-		if (c.configVersion < 3) { // enchaînement quasi immédiat (~2-3 ticks)
-			c.reactionDelayMinTicks = 0;
-			c.reactionDelayMaxTicks = 2;
-			c.idleSearchIntervalTicks = 1;
-		}
-		if (c.configVersion < 4) { // navigation : recalcul de chemin plus fréquent (cibles mobiles)
+		if (c.configVersion < 4) {
 			c.pathRecomputeIntervalTicks = 10;
 		}
-		if (c.configVersion < 5) { // visée : rotation plus vive, dérive plus discrète, anticipation, tolérance de hitbox
-			c.minYawSpeed = 3.0f;
-			c.maxYawSpeed = 40.0f;
-			c.minPitchSpeed = 3.0f;
-			c.maxPitchSpeed = 30.0f;
-			c.rotationEaseFactor = 0.45f;
-			c.aimOffsetFraction = 0.12;
-		}
-		if (c.configVersion < 6) { // détection du beacon plus large
+		if (c.configVersion < 6) {
 			c.mechanicScanRadius = 12;
 			c.mechanicScanHalfHeight = 4;
 		}
-		if (c.configVersion < 7) { // plus de mouvement gauche/droite : l'écran ne doit pas balayer pour rien
-			c.strafeInCombat = false;
-			c.aimOffsetFraction = 0.0;
+		if (c.configVersion < 8) {
+			c.idleSearchIntervalTicks = 1;
+			c.camPeakSpeedDeg = 14.0f;
 		}
 		c.configVersion = CURRENT_VERSION;
 	}

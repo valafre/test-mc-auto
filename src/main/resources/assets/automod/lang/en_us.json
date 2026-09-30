@@ -2,6 +2,7 @@
 	"key.category.automod.main": "AutoMod",
 	"key.automod.toggle_voidgloom": "Toggle Voidgloom module",
 	"key.automod.menu": "Open AutoMod menu",
+	"key.automod.record_camera": "Record camera data (CSV)",
 	"key.automod.inspect": "Inspect targeted block/entity (chat + clipboard)",
 	"key.automod.panic": "Emergency stop (disable all modules)"
 }

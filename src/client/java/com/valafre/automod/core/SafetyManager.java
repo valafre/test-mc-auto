@@ -80,7 +80,7 @@ public final class SafetyManager {
 		Debug.log("Safety", () -> "stopAll : " + reason);
 		framework.tasks().cancelAll(framework);
 		framework.movement().reset();
-		framework.rotation().cancel();
+		framework.rotation().reset();
 		framework.combat().reset();
 		framework.items().reset();
 		framework.support().reset();
