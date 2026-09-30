@@ -17,7 +17,8 @@ JAVA_HOME=<jdk25> ./gradlew build     # jar dans build/libs/
 ```
 
 ## Touches (catégorie « AutoMod »)
-- `V` : activer/désactiver le module Voidgloom
+- `INSERT` : ouvre le menu de réglage (modules, options, distances)
+- Toggle Voidgloom : bouton du menu (touche optionnelle, non assignée par défaut)
 - `I` : écrit dans le chat et copie dans le presse-papiers le bloc/l'entité visé(e)
 - `END` : arrêt d'urgence (stopAll + désactive tous les modules)
 

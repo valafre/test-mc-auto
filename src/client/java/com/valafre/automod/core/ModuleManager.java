@@ -24,6 +24,15 @@ public final class ModuleManager {
 		return false;
 	}
 
+	public boolean isEnabled(String id) {
+		for (AbstractModule module : modules) {
+			if (module.id().equals(id)) {
+				return module.isEnabled();
+			}
+		}
+		return false;
+	}
+
 	public void tick(Framework framework) {
 		for (AbstractModule module : modules) {
 			if (module.isEnabled()) {
