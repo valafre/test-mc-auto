@@ -19,6 +19,8 @@ public final class AttackTargetTask extends Task {
 
 	/** Au-delà de approachDistance + cette marge, on se contente de poursuivre (pas de strafe). */
 	private static final double STRAFE_ZONE_MARGIN = 1.0;
+	/** Reculer seulement si on est vraiment collé dans la cible. */
+	private static final double CLOSE_BACK_DISTANCE = 0.8;
 
 	private final LivingEntity target;
 	private final boolean holdPosition;
@@ -55,8 +57,11 @@ public final class AttackTargetTask extends Task {
 		if (!holdPosition) {
 			boolean inStrafeZone = info.distance() <= cfg.approachDistance + STRAFE_ZONE_MARGIN
 				&& f.combat().hasLineOfSight(f.player(), target);
-			if (cfg.strafeInCombat && inStrafeZone) {
+			if (inStrafeZone && cfg.strafeInCombat) {
 				strafe(f, cfg, info);
+			} else if (inStrafeZone) {
+				// Sans strafe : on avance vers la cible en continu (pas d'arrêt pour frapper), sans balayer l'écran.
+				f.movement().combatMove(f.player(), owner(), info.distance(), CLOSE_BACK_DISTANCE, cfg.combatMinDistance, 0);
 			} else {
 				chase.step(f, owner(), target, info); // trop loin ou sans ligne de vue : on rejoint / contourne
 			}

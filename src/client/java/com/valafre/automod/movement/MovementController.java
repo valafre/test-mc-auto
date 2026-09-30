@@ -141,7 +141,7 @@ public final class MovementController {
 	 * Mouvement continu pendant le combat : strafe (gauche/droite) autour de la cible + avancer/reculer pour garder la
 	 * distance entre {@code keepMin} et {@code keepMax}. Le regard est géré par l'appelant (il reste sur la cible).
 	 *
-	 * @param strafeDir +1 = droite, -1 = gauche
+	 * @param strafeDir +1 = droite, -1 = gauche, 0 = aucun mouvement latéral (avance/recul seulement)
 	 * @return false si le côté choisi est impraticable (mur, vide) : l'appelant doit inverser le sens
 	 */
 	public boolean combatMove(PlayerState state, String owner, double distance, double keepMin, double keepMax, int strafeDir) {
@@ -158,7 +158,7 @@ public final class MovementController {
 		if (combatForward && combatBack) {
 			combatBack = false;
 		}
-		if (sideOk) {
+		if (strafeDir != 0 && sideOk) {
 			input.request(owner, strafeDir > 0 ? Key.RIGHT : Key.LEFT, true);
 		}
 		input.request(owner, Key.FORWARD, combatForward);
@@ -172,7 +172,7 @@ public final class MovementController {
 			jumpCooldown = JUMP_COOLDOWN_TICKS;
 		}
 		input.request(owner, Key.JUMP, jump);
-		lastStatus = "COMBAT (strafe " + (strafeDir > 0 ? "droite" : "gauche") + ")";
+		lastStatus = strafeDir == 0 ? "COMBAT (avance)" : "COMBAT (strafe " + (strafeDir > 0 ? "droite" : "gauche") + ")";
 		return sideOk;
 	}
 

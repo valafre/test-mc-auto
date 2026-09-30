@@ -20,7 +20,7 @@ public final class ModConfig {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger("automod");
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-	private static final int CURRENT_VERSION = 6;
+	private static final int CURRENT_VERSION = 7;
 	private static ModConfig instance = new ModConfig();
 
 	/** Sert à migrer les anciens fichiers de config dont les valeurs par défaut ont changé. */
@@ -90,8 +90,8 @@ public final class ModConfig {
 	public boolean humanize = true;
 	/** La visée reste dans la partie HAUTE de la hitbox : à partir de cette fraction de la hauteur (0.55 = les 45 % du haut). */
 	public double aimBandMinFraction = 0.55;
-	/** Amplitude de la dérive du point visé, en fraction de la taille de la hitbox. */
-	public double aimOffsetFraction = 0.12;
+	/** Dérive LATÉRALE du point visé (fraction de la largeur de la hitbox) ; 0 = pas de balayage gauche/droite. */
+	public double aimOffsetFraction = 0.0;
 	/** Anticipation : on vise la position de la cible dans X ticks (selon sa vitesse) pour ne pas être en retard sur une cible mobile. */
 	public double aimLeadTicks = 2.0;
 	/** Marge ajoutée à la hitbox pour décider qu'on "est dessus" (le serveur ne vérifie que la distance). */
@@ -140,8 +140,8 @@ public final class ModConfig {
 	// MOUVEMENT / PATHFINDING
 	// ========================================
 	public boolean useSprint = true;
-	/** Pendant le combat, le joueur bouge en continu (strafe autour de la cible) au lieu de s'arrêter pour frapper. */
-	public boolean strafeInCombat = true;
+	/** Strafe gauche/droite autour de la cible (fait balayer l'écran). Désactivé : en combat on avance seulement vers la cible. */
+	public boolean strafeInCombat = false;
 	/** Sneak (accroupi) pendant le combat contre le boss. Ignoré si l'option vanilla "sneak en bascule" est active. */
 	public boolean sneakOnBoss = true;
 	/** Enderman normal : abandonné si toujours en vie X ticks après le premier contact (portée + ligne de vue). Jamais pour le boss. */
@@ -253,6 +253,10 @@ public final class ModConfig {
 		if (c.configVersion < 6) { // détection du beacon plus large
 			c.mechanicScanRadius = 12;
 			c.mechanicScanHalfHeight = 4;
+		}
+		if (c.configVersion < 7) { // plus de mouvement gauche/droite : l'écran ne doit pas balayer pour rien
+			c.strafeInCombat = false;
+			c.aimOffsetFraction = 0.0;
 		}
 		c.configVersion = CURRENT_VERSION;
 	}
