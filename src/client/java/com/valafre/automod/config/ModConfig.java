@@ -20,7 +20,7 @@ public final class ModConfig {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger("automod");
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-	private static final int CURRENT_VERSION = 9;
+	private static final int CURRENT_VERSION = 10;
 	private static ModConfig instance = new ModConfig();
 
 	/** Sert à migrer les anciens fichiers de config dont les valeurs par défaut ont changé. */
@@ -90,8 +90,8 @@ public final class ModConfig {
 	public boolean humanize = true;
 	/** La visée reste dans la partie HAUTE de la hitbox : à partir de cette fraction de la hauteur (0.55 = les 45 % du haut). */
 	public double aimBandLowFraction = 0.45;
-	/** Limite haute de la bande, en fraction de la hauteur depuis le bas : 0.70 = 30 % de marge depuis le haut. */
-	public double aimBandHighFraction = 0.70;
+	/** Limite haute de la bande, en fraction de la hauteur depuis le bas : 0.60 = 40 % de marge depuis le haut. */
+	public double aimBandHighFraction = 0.60;
 	/** Anticipation : on vise la position de la cible dans X ticks (selon sa vitesse) pour ne pas être en retard sur une cible mobile. */
 	public double aimLeadTicks = 2.0;
 	/** Marge ajoutée à la hitbox pour décider qu'on "est dessus" (le serveur ne vérifie que la distance). */
@@ -258,6 +258,10 @@ public final class ModConfig {
 		if (c.configVersion < 9) { // visée plus vive (les nouveaux champs de bande prennent leurs défauts)
 			c.camPeakSpeedDeg = 18.0f;
 			c.camMaxAccelDeg = 6.5f;
+		}
+		if (c.configVersion < 10) { // bande de visée 45 % -> 60 % (40 % de marge en haut)
+			c.aimBandLowFraction = 0.45;
+			c.aimBandHighFraction = 0.60;
 		}
 		c.configVersion = CURRENT_VERSION;
 	}
