@@ -20,7 +20,11 @@ public final class ModConfig {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger("automod");
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+	private static final int CURRENT_VERSION = 2;
 	private static ModConfig instance = new ModConfig();
+
+	/** Sert à migrer les anciens fichiers de config dont les valeurs par défaut ont changé. */
+	public int configVersion = 0;
 
 	// ========================================
 	// GÉNÉRAL
@@ -36,6 +40,8 @@ public final class ModConfig {
 	public double targetKeepRangeFactor = 1.5;
 	/** Intervalle (ticks) entre deux recherches d'entités quand aucune cible n'est suivie. */
 	public int targetSearchIntervalTicks = 10;
+	/** Intervalle de recherche quand aucune cible n'est suivie (enchaînement des kills). */
+	public int idleSearchIntervalTicks = 2;
 	/** Sur certains serveurs le nom est porté par un ArmorStand posé sur l'Enderman : on l'accepte aussi. */
 	public boolean allowArmorStandNameplate = true;
 	/** Ne cibler que le boss invoqué par soi (ligne "Spawned by: pseudo" du nametag). */
@@ -62,8 +68,8 @@ public final class ModConfig {
 	public double aimOffsetFraction = 0.25;
 	/** Variation (+/-) de la vitesse de rotation propre à chaque cible. */
 	public float rotationSpeedVariation = 0.2f;
-	public int reactionDelayMinTicks = 4;
-	public int reactionDelayMaxTicks = 14;
+	public int reactionDelayMinTicks = 1;
+	public int reactionDelayMaxTicks = 5;
 
 	// ========================================
 	// DISTANCES
@@ -159,7 +165,20 @@ public final class ModConfig {
 				LOGGER.warn("Config illisible, valeurs par défaut utilisées", e);
 			}
 		}
+		migrate();
 		save(); // réécrit le fichier pour y ajouter les nouveaux champs
+	}
+
+	/** v2 : enchaînement des cibles plus rapide et plus de blocage par la force d'attaque vanilla (nécessaire pour 10-13 CPS). */
+	private static void migrate() {
+		ModConfig c = instance;
+		if (c.configVersion < 2) {
+			c.reactionDelayMinTicks = 1;
+			c.reactionDelayMaxTicks = 5;
+			c.idleSearchIntervalTicks = 2;
+			c.minAttackStrength = 0.0f;
+		}
+		c.configVersion = CURRENT_VERSION;
 	}
 
 	public static void save() {

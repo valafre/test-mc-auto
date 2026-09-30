@@ -148,6 +148,7 @@ public final class VoidgloomModule extends AbstractModule {
 				handledMechanic = null;
 				holdPosition = false;
 				mechanics.reset();
+				searchTimer = 0; // chercher la cible suivante tout de suite
 				fsm.transition(VoidgloomState.SEARCHING_TARGET);
 			}
 			case STOPPING -> {
@@ -167,7 +168,7 @@ public final class VoidgloomModule extends AbstractModule {
 		if (searchTimer-- > 0) {
 			return; // recherche d'entités espacée
 		}
-		searchTimer = cfg.targetSearchIntervalTicks - 1;
+		searchTimer = Math.max(1, cfg.idleSearchIntervalTicks) - 1;
 		PlayerState ps = f.player();
 		VoidgloomTarget.Result result = VoidgloomTarget.find(f);
 		updateCounters(result);
