@@ -53,7 +53,7 @@ public final class Humanizer {
 			AABB box = entity.getBoundingBox();
 			gx = (rng.nextDouble() * 2 - 1) * box.getXsize() * cfg.aimOffsetFraction;
 			gz = (rng.nextDouble() * 2 - 1) * box.getZsize() * cfg.aimOffsetFraction;
-			goalBand = 0.1 + rng.nextDouble() * 0.8; // évite les bords de la bande
+			goalBand = 0.25 + rng.nextDouble() * 0.5; // reste au coeur de la bande haute, loin des bords
 			rerollIn = 20 + rng.nextInt(30);
 		}
 		ox += (gx - ox) * DRIFT_LERP;
@@ -75,7 +75,14 @@ public final class Humanizer {
 		AABB box = entity.getBoundingBox();
 		double min = ModConfig.get().aimBandMinFraction;
 		double y = box.minY + box.getYsize() * (min + (1.0 - min) * bandPosition);
-		return new Vec3(center.x + dx, y, center.z + dz);
+		// Anticipation : déplacement horizontal de la cible par tick, prolongé de aimLeadTicks (ignoré si téléportation).
+		double vx = entity.getX() - entity.xo;
+		double vz = entity.getZ() - entity.zo;
+		double lead = ModConfig.get().aimLeadTicks;
+		if (vx * vx + vz * vz > 2.25) {
+			lead = 0;
+		}
+		return new Vec3(center.x + dx + vx * lead, y, center.z + dz + vz * lead);
 	}
 
 	// ========================================

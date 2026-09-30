@@ -20,7 +20,7 @@ public final class ModConfig {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger("automod");
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-	private static final int CURRENT_VERSION = 4;
+	private static final int CURRENT_VERSION = 5;
 	private static ModConfig instance = new ModConfig();
 
 	/** Sert à migrer les anciens fichiers de config dont les valeurs par défaut ont changé. */
@@ -87,7 +87,11 @@ public final class ModConfig {
 	/** La visée reste dans la partie HAUTE de la hitbox : à partir de cette fraction de la hauteur (0.55 = les 45 % du haut). */
 	public double aimBandMinFraction = 0.55;
 	/** Amplitude de la dérive du point visé, en fraction de la taille de la hitbox. */
-	public double aimOffsetFraction = 0.25;
+	public double aimOffsetFraction = 0.12;
+	/** Anticipation : on vise la position de la cible dans X ticks (selon sa vitesse) pour ne pas être en retard sur une cible mobile. */
+	public double aimLeadTicks = 2.0;
+	/** Marge ajoutée à la hitbox pour décider qu'on "est dessus" (le serveur ne vérifie que la distance). */
+	public double hitboxMargin = 0.15;
 	/** Variation (+/-) de la vitesse de rotation propre à chaque cible. */
 	public float rotationSpeedVariation = 0.2f;
 	public int reactionDelayMinTicks = 0;
@@ -108,12 +112,12 @@ public final class ModConfig {
 	// ========================================
 	// ROTATION (degrés par tick)
 	// ========================================
-	public float minYawSpeed = 2.0f;
-	public float maxYawSpeed = 25.0f;
-	public float minPitchSpeed = 1.5f;
-	public float maxPitchSpeed = 15.0f;
+	public float minYawSpeed = 3.0f;
+	public float maxYawSpeed = 40.0f;
+	public float minPitchSpeed = 3.0f;
+	public float maxPitchSpeed = 30.0f;
 	/** Fraction de l'écart restant corrigée par tick (avant bornage min/max) : donne le ralentissement progressif. */
-	public float rotationEaseFactor = 0.35f;
+	public float rotationEaseFactor = 0.45f;
 	/** Étale chaque pas de rotation sur les images du tick (caméra fluide à haut FPS au lieu de 20 sauts/s). */
 	public boolean smoothFrameRotation = true;
 	public float alignToleranceYaw = 6.0f;
@@ -225,6 +229,14 @@ public final class ModConfig {
 		}
 		if (c.configVersion < 4) { // navigation : recalcul de chemin plus fréquent (cibles mobiles)
 			c.pathRecomputeIntervalTicks = 10;
+		}
+		if (c.configVersion < 5) { // visée : rotation plus vive, dérive plus discrète, anticipation, tolérance de hitbox
+			c.minYawSpeed = 3.0f;
+			c.maxYawSpeed = 40.0f;
+			c.minPitchSpeed = 3.0f;
+			c.maxPitchSpeed = 30.0f;
+			c.rotationEaseFactor = 0.45f;
+			c.aimOffsetFraction = 0.12;
 		}
 		c.configVersion = CURRENT_VERSION;
 	}

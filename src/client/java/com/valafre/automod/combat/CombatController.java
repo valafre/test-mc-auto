@@ -78,7 +78,7 @@ public final class CombatController {
 	public boolean isCrosshairOnTarget(PlayerState state, LivingEntity target) {
 		Vec3 eye = state.eyePosition();
 		Vec3 end = eye.add(state.player().getViewVector(1.0f).scale(ModConfig.get().attackDistance));
-		AABB box = target.getBoundingBox().inflate(target.getPickRadius());
+		AABB box = target.getBoundingBox().inflate(target.getPickRadius() + ModConfig.get().hitboxMargin);
 		return box.contains(eye) || box.clip(eye, end).isPresent();
 	}
 

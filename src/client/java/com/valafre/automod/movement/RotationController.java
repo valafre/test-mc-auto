@@ -69,8 +69,8 @@ public final class RotationController {
 		float pitchStep = step(pitchDelta, cfg.minPitchSpeed * factor, cfg.maxPitchSpeed * factor, cfg.rotationEaseFactor);
 		if (cfg.humanize) {
 			// La vitesse réelle rattrape la vitesse voulue avec une accélération bornée : démarrage et arrêt progressifs.
-			yawVelocity = approach(yawVelocity, yawStep, Math.max(0.8f, cfg.maxYawSpeed * 0.3f));
-			pitchVelocity = approach(pitchVelocity, pitchStep, Math.max(0.6f, cfg.maxPitchSpeed * 0.3f));
+			yawVelocity = approach(yawVelocity, yawStep, Math.max(1.5f, cfg.maxYawSpeed * 0.6f));
+			pitchVelocity = approach(pitchVelocity, pitchStep, Math.max(1.2f, cfg.maxPitchSpeed * 0.6f));
 			yawStep = limit(yawVelocity, yawDelta);
 			pitchStep = limit(pitchVelocity, pitchDelta);
 		}
