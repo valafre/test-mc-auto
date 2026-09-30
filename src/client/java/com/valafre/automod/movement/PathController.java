@@ -39,17 +39,64 @@ public final class PathController {
 		}
 	}
 
-	/** @return la liste de cases (départ exclu, but inclus), ou une liste vide si aucun chemin n'est trouvé dans la limite de nœuds. */
+	/** Chemin trouvé : {@code complete} = atteint réellement le but ; sinon, meilleur chemin partiel (case explorée la plus proche du but). */
+	public record PathResult(List<BlockPos> path, boolean complete) {
+		public static final PathResult NONE = new PathResult(List.of(), false);
+	}
+
+	/** @return le chemin COMPLET (départ exclu, but inclus), ou une liste vide si le but est inaccessible (utilisé pour valider une position). */
 	public List<BlockPos> findPath(Level level, BlockPos start, BlockPos goal, int maxNodes) {
 		if (!Walkability.canStandAt(level, goal)) {
 			return List.of();
 		}
+		PathResult result = search(level, start, goal, maxNodes);
+		return result.complete() ? result.path() : List.of();
+	}
+
+	/**
+	 * Comme {@link #findPath} mais tolérant : un but non praticable est ramené à la case praticable la plus proche, et si
+	 * aucun chemin complet n'existe dans la limite de nœuds, on renvoie le chemin vers la case explorée la plus proche du but
+	 * (le joueur se rapproche puis un nouveau calcul prend le relais).
+	 */
+	public PathResult findPathBestEffort(Level level, BlockPos start, BlockPos goal, int maxNodes) {
+		BlockPos target = nearestStandable(level, goal, 3);
+		if (target == null) {
+			return PathResult.NONE;
+		}
+		return search(level, start, target, maxNodes);
+	}
+
+	/** Case praticable la plus proche de {@code pos} (rayon horizontal {@code radius}, +/-2 en hauteur), ou null. */
+	public BlockPos nearestStandable(Level level, BlockPos pos, int radius) {
+		if (Walkability.canStandAt(level, pos)) {
+			return pos;
+		}
+		BlockPos best = null;
+		int bestScore = Integer.MAX_VALUE;
+		for (int dy = -2; dy <= 2; dy++) {
+			for (int dx = -radius; dx <= radius; dx++) {
+				for (int dz = -radius; dz <= radius; dz++) {
+					BlockPos candidate = pos.offset(dx, dy, dz);
+					int score = dx * dx + dz * dz + dy * dy * 2;
+					if (score < bestScore && Walkability.canStandAt(level, candidate)) {
+						bestScore = score;
+						best = candidate;
+					}
+				}
+			}
+		}
+		return best;
+	}
+
+	private PathResult search(Level level, BlockPos start, BlockPos goal, int maxNodes) {
 		PriorityQueue<Node> open = new PriorityQueue<>((a, b) -> Double.compare(a.f, b.f));
 		Map<Long, Node> nodes = new HashMap<>();
 		Node first = new Node(start, null, 0, heuristic(start, goal));
 		open.add(first);
 		nodes.put(start.asLong(), first);
 
+		Node closest = first;
+		double closestH = heuristic(start, goal);
 		int expanded = 0;
 		while (!open.isEmpty() && expanded < maxNodes) {
 			Node current = open.poll();
@@ -59,13 +106,19 @@ public final class PathController {
 			current.closed = true;
 			expanded++;
 			if (current.pos.equals(goal)) {
-				return reconstruct(current);
+				return new PathResult(reconstruct(current), true);
+			}
+			double h = current.f - current.g;
+			if (h < closestH) {
+				closestH = h;
+				closest = current;
 			}
 			for (int[] dir : DIRECTIONS) {
 				expand(level, current, dir[0], dir[1], goal, open, nodes);
 			}
 		}
-		return List.of();
+		// But non atteint : chemin partiel vers la case la plus proche du but (s'il y a eu un vrai progrès).
+		return closest == first ? PathResult.NONE : new PathResult(reconstruct(closest), false);
 	}
 
 	private void expand(Level level, Node current, int dx, int dz, BlockPos goal,
@@ -107,6 +160,7 @@ public final class PathController {
 		if (next == null) {
 			return;
 		}
+		cost += wallPenalty(level, next);
 		double g = current.g + cost;
 		Node known = nodes.get(next.asLong());
 		if (known != null && (known.closed || known.g <= g)) {
@@ -115,6 +169,18 @@ public final class PathController {
 		Node node = new Node(next, current, g, g + heuristic(next, goal));
 		nodes.put(next.asLong(), node);
 		open.add(node);
+	}
+
+	/** Petit surcoût pour les cases collées à un mur : les chemins restent naturellement à distance des parois. */
+	private static double wallPenalty(Level level, BlockPos pos) {
+		double penalty = 0;
+		for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.Plane.HORIZONTAL) {
+			BlockPos side = pos.relative(dir);
+			if (!level.getBlockState(side).getCollisionShape(level, side).isEmpty()) {
+				penalty += 0.3;
+			}
+		}
+		return penalty;
 	}
 
 	private static double heuristic(BlockPos a, BlockPos b) {

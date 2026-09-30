@@ -40,6 +40,9 @@ public final class MovementController {
 	private BlockPos pathGoal;
 	private int ticksSincePath = Integer.MAX_VALUE / 2;
 	private boolean lineClear;
+	private boolean pathComplete;
+	private int ticksSinceLookahead;
+	private int collisionTicks;   // ticks consécutifs collé à un obstacle : déclenche un nouveau calcul de chemin
 	private int ticksSinceLineCheck = Integer.MAX_VALUE / 2;
 
 	private int jumpCooldown;
@@ -85,7 +88,7 @@ public final class MovementController {
 			waypoint = dest;
 			lastStatus = "MOVING (marche directe, pas de chemin)";
 		} else {
-			lastStatus = path.isEmpty() ? "MOVING (ligne droite)" : "MOVING (chemin A*, " + (path.size() - pathIndex) + " cases)";
+			lastStatus = path.isEmpty() ? "MOVING (ligne droite)" : "MOVING (chemin " + (pathComplete ? "complet" : "partiel") + ", " + (path.size() - pathIndex) + " cases)";
 		}
 
 		if (updateStuck(pos)) {
@@ -129,7 +132,11 @@ public final class MovementController {
 	// WAYPOINT / CHEMIN
 	// ========================================
 
-	/** Ligne droite si franchissable (test mis en cache), sinon prochain nœud du chemin A* (recalculé périodiquement). */
+	/**
+	 * Ligne droite si franchissable (test mis en cache), sinon chemin A* recalculé périodiquement. Le chemin est "lissé" :
+	 * parmi les prochains nœuds on vise le plus lointain en ligne droite dégagée, ce qui donne peu de points de passage
+	 * (trajectoire naturelle) tout en contournant murs et obstacles là où c'est nécessaire.
+	 */
 	private Vec3 resolveWaypoint(PlayerState state, Vec3 dest) {
 		ModConfig cfg = ModConfig.get();
 		Vec3 pos = state.position();
@@ -145,17 +152,34 @@ public final class MovementController {
 
 		BlockPos goal = BlockPos.containing(dest.x, dest.y + 0.05, dest.z);
 		boolean goalMoved = pathGoal == null || pathGoal.distSqr(goal) > 4;
-		if (goalMoved || ++ticksSincePath >= cfg.pathRecomputeIntervalTicks || pathIndex >= path.size()) {
-			path = paths.findPath(state.level(), state.player().blockPosition(), goal, cfg.pathMaxNodes);
+		boolean needsPath = goalMoved || ++ticksSincePath >= cfg.pathRecomputeIntervalTicks
+			|| pathIndex >= path.size() || (collisionTicks > 12);
+		if (needsPath) {
+			PathController.PathResult result =
+				paths.findPathBestEffort(state.level(), state.player().blockPosition(), goal, cfg.pathMaxNodes);
+			path = result.path();
+			pathComplete = result.complete();
 			pathIndex = 0;
 			pathGoal = goal;
 			ticksSincePath = 0;
+			collisionTicks = 0;
 		}
 		if (path.isEmpty()) {
 			return null;
 		}
 		while (pathIndex < path.size() - 1 && reached(pos, path.get(pathIndex))) {
 			pathIndex++;
+		}
+		// Lissage : on saute directement au nœud le plus lointain (8 max) atteignable en ligne droite dégagée.
+		if (++ticksSinceLookahead >= 3) {
+			ticksSinceLookahead = 0;
+			for (int j = Math.min(path.size() - 1, pathIndex + 8); j > pathIndex; j--) {
+				BlockPos n = path.get(j);
+				if (paths.isClearLine(state.level(), pos, new Vec3(n.getX() + 0.5, n.getY(), n.getZ() + 0.5))) {
+					pathIndex = j;
+					break;
+				}
+			}
 		}
 		BlockPos node = path.get(pathIndex);
 		return new Vec3(node.getX() + 0.5, node.getY(), node.getZ() + 0.5);
@@ -209,6 +233,7 @@ public final class MovementController {
 		if (jumpCooldown > 0) {
 			jumpCooldown--;
 		}
+		collisionTicks = state.player().horizontalCollision && forwardOn ? collisionTicks + 1 : 0;
 		boolean needsStep = waypoint.y > pos.y + 0.6 && Math.sqrt((waypoint.x - pos.x) * (waypoint.x - pos.x)
 			+ (waypoint.z - pos.z) * (waypoint.z - pos.z)) < 1.6;
 		boolean jump = state.onGround() && jumpCooldown == 0

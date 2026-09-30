@@ -18,6 +18,7 @@ public final class AttackTargetTask extends Task {
 
 	private final LivingEntity target;
 	private final boolean endWhenOutOfRange;
+	private final Chase chase = new Chase();
 
 	/**
 	 * @param endWhenOutOfRange true : la tâche se termine quand la cible s'éloigne (le module reprend le suivi) ;
@@ -43,6 +44,10 @@ public final class AttackTargetTask extends Task {
 		f.rotation().lookAt(f.humanizer().adjustAim(target, info.aimPoint()));
 		if (endWhenOutOfRange && info.distance() > ModConfig.get().attackDistance + RANGE_HYSTERESIS) {
 			return TaskStatus.SUCCEEDED;
+		}
+		// On ne s'arrête pas pour frapper : la poursuite continue pendant les attaques (sauf position imposée par une mécanique).
+		if (endWhenOutOfRange) {
+			chase.step(f, owner(), target, info);
 		}
 		f.combat().tryAttack(f.player(), target);
 		return TaskStatus.RUNNING;

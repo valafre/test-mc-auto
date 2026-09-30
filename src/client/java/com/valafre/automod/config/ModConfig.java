@@ -20,7 +20,7 @@ public final class ModConfig {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger("automod");
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-	private static final int CURRENT_VERSION = 3;
+	private static final int CURRENT_VERSION = 4;
 	private static ModConfig instance = new ModConfig();
 
 	/** Sert à migrer les anciens fichiers de config dont les valeurs par défaut ont changé. */
@@ -111,7 +111,7 @@ public final class ModConfig {
 	// ========================================
 	public boolean useSprint = true;
 	public int pathMaxNodes = 1500;
-	public int pathRecomputeIntervalTicks = 20;
+	public int pathRecomputeIntervalTicks = 10;
 	/** Durée maximale d'un déplacement vers une position avant abandon. */
 	public int moveTimeoutTicks = 200;
 	/** Fenêtre (ticks) de détection de blocage ; 3 fenêtres consécutives sans progrès = bloqué. */
@@ -184,6 +184,9 @@ public final class ModConfig {
 			c.reactionDelayMinTicks = 0;
 			c.reactionDelayMaxTicks = 2;
 			c.idleSearchIntervalTicks = 1;
+		}
+		if (c.configVersion < 4) { // navigation : recalcul de chemin plus fréquent (cibles mobiles)
+			c.pathRecomputeIntervalTicks = 10;
 		}
 		c.configVersion = CURRENT_VERSION;
 	}

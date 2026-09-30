@@ -1,6 +1,5 @@
 package com.valafre.automod.task;
 
-import com.valafre.automod.config.ModConfig;
 import com.valafre.automod.core.Framework;
 import com.valafre.automod.core.Task;
 import com.valafre.automod.core.TaskStatus;
@@ -14,10 +13,8 @@ import net.minecraft.world.entity.Entity;
  */
 public final class FollowTargetTask extends Task {
 
-	private static final double RESUME_MARGIN = 0.7;
-
 	private final Entity target;
-	private boolean moving;
+	private final Chase chase = new Chase();
 
 	public FollowTargetTask(int priority, Entity target) {
 		super(priority);
@@ -36,15 +33,7 @@ public final class FollowTargetTask extends Task {
 		}
 		TargetInfo info = TargetInfo.of(f.player(), target);
 		f.rotation().lookAt(f.humanizer().adjustAim(target, info.aimPoint()));
-		ModConfig cfg = ModConfig.get();
-		// Hystérésis : on s'arrête à approachDistance mais on ne repart qu'au-delà de +0.7 bloc (pas de stop-and-go).
-		moving = moving ? info.distance() > cfg.approachDistance : info.distance() > cfg.approachDistance + RESUME_MARGIN;
-		if (moving) {
-			// Destination = position actuelle de la cible ; stop à approachDistance de sa position horizontale.
-			f.movement().moveTo(f.player(), owner(), target.position(), cfg.approachDistance, false);
-		} else {
-			f.movement().reset();
-		}
+		chase.step(f, owner(), target, info);
 		return TaskStatus.RUNNING;
 	}
 }
