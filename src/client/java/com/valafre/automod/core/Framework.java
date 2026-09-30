@@ -1,6 +1,7 @@
 package com.valafre.automod.core;
 
 import com.valafre.automod.combat.CombatController;
+import com.valafre.automod.humanize.Humanizer;
 import com.valafre.automod.input.InputController;
 import com.valafre.automod.movement.MovementController;
 import com.valafre.automod.movement.PathController;
@@ -19,7 +20,8 @@ public final class Framework {
 	private final Minecraft mc;
 	private final PlayerState playerState = new PlayerState();
 	private final InputController input = new InputController();
-	private final RotationController rotation = new RotationController();
+	private final Humanizer humanizer = new Humanizer();
+	private final RotationController rotation = new RotationController(humanizer);
 	private final PathController paths = new PathController();
 	private final MovementController movement = new MovementController(input, rotation, paths);
 	private final PositionController positions = new PositionController(paths);
@@ -35,12 +37,13 @@ public final class Framework {
 
 	public Framework(Minecraft mc) {
 		this.mc = mc;
-		this.combat = new CombatController(mc, rotation);
+		this.combat = new CombatController(mc, rotation, humanizer);
 	}
 
 	public Minecraft minecraft() { return mc; }
 	public PlayerState player() { return playerState; }
 	public InputController input() { return input; }
+	public Humanizer humanizer() { return humanizer; }
 	public RotationController rotation() { return rotation; }
 	public MovementController movement() { return movement; }
 	public PositionController positions() { return positions; }

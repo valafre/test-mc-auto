@@ -32,7 +32,7 @@ public final class FollowTargetTask extends Task {
 			return TaskStatus.FAILED;
 		}
 		TargetInfo info = TargetInfo.of(f.player(), target);
-		f.rotation().lookAt(info.aimPoint());
+		f.rotation().lookAt(f.humanizer().adjustAim(target, info.aimPoint()));
 		ModConfig cfg = ModConfig.get();
 		if (info.distance() > cfg.approachDistance) {
 			// Destination = position actuelle de la cible ; stop à approachDistance de sa position horizontale.

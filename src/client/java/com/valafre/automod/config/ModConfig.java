@@ -43,6 +43,26 @@ public final class ModConfig {
 	public int voidgloomRequiredLevel = 0;
 
 	// ========================================
+	// FARM DES ENDERMAN (pour faire apparaître le boss)
+	// ========================================
+	/** Tue les Enderman normaux tant qu'aucun Voidgloom n'est présent. */
+	public boolean farmMobs = true;
+	public String farmMobKeyword = "enderman";
+	public double farmSearchRange = 32.0;
+
+	// ========================================
+	// HUMANISATION
+	// ========================================
+	public boolean humanize = true;
+	/** Amplitude de la dérive du point visé, en fraction de la taille de la hitbox. */
+	public double aimOffsetFraction = 0.25;
+	/** Variation (+/-) de la vitesse de rotation propre à chaque cible. */
+	public float rotationSpeedVariation = 0.2f;
+	public int reactionDelayMinTicks = 4;
+	public int reactionDelayMaxTicks = 14;
+	public int attackJitterTicks = 3;
+
+	// ========================================
 	// DISTANCES
 	// ========================================
 	/** Distance (oeil -> hitbox) à laquelle le suivi s'arrête. Doit être < attackDistance. */

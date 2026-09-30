@@ -40,7 +40,7 @@ public final class AttackTargetTask extends Task {
 			return TaskStatus.FAILED;
 		}
 		TargetInfo info = TargetInfo.of(f.player(), target);
-		f.rotation().lookAt(info.aimPoint());
+		f.rotation().lookAt(f.humanizer().adjustAim(target, info.aimPoint()));
 		if (endWhenOutOfRange && info.distance() > ModConfig.get().attackDistance + RANGE_HYSTERESIS) {
 			return TaskStatus.SUCCEEDED;
 		}

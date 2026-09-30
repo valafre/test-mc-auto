@@ -23,14 +23,20 @@ public final class VoidgloomTarget {
 	 * ("[Lv50] Enderman 9,000/9,000") sont ignorés.
 	 */
 	/** @param endermen nombre d'Enderman vus à portée (tous), @param bosses ceux retenus comme Voidgloom. */
-	public record Result(List<EnderMan> bosses, int endermen) {}
+	public record Result(List<EnderMan> bosses, List<EnderMan> mobs, int endermen) {}
 
 	public static Result find(Framework f) {
 		ModConfig cfg = ModConfig.get();
-		List<EntityInfo> infos = f.entityInfo().scan(f.player(), EnderMan.class, cfg.targetSearchRange, f.entityDetector());
+		double range = cfg.farmMobs ? Math.max(cfg.targetSearchRange, cfg.farmSearchRange) : cfg.targetSearchRange;
+		List<EntityInfo> infos = f.entityInfo().scan(f.player(), EnderMan.class, range, f.entityDetector());
 		List<EnderMan> result = new ArrayList<>();
+		List<EnderMan> mobs = new ArrayList<>();
 		for (EntityInfo info : infos) {
 			if (!info.nameContains(cfg.voidgloomNameKeyword)) {
+				// Enderman normal ("[Lv50] Enderman") : cible de farm pour faire apparaître le boss.
+				if (cfg.farmMobs && info.nameContains(cfg.farmMobKeyword)) {
+					mobs.add(EnderMan.class.cast(info.entity()));
+				}
 				continue;
 			}
 			if (cfg.voidgloomRequiredLevel > 0 && info.level() != cfg.voidgloomRequiredLevel) {
@@ -38,6 +44,6 @@ public final class VoidgloomTarget {
 			}
 			result.add(EnderMan.class.cast(info.entity()));
 		}
-		return new Result(result, infos.size());
+		return new Result(result, mobs, infos.size());
 	}
 }

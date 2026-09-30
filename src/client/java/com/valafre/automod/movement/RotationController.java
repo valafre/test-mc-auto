@@ -2,6 +2,7 @@ package com.valafre.automod.movement;
 
 import com.valafre.automod.config.ModConfig;
 import com.valafre.automod.core.PlayerState;
+import com.valafre.automod.humanize.Humanizer;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
@@ -12,7 +13,14 @@ import net.minecraft.world.phys.Vec3;
  */
 public final class RotationController {
 
+	private final Humanizer humanizer;
 	private Vec3 target;
+	private float yawVelocity;
+	private float pitchVelocity;
+
+	public RotationController(Humanizer humanizer) {
+		this.humanizer = humanizer;
+	}
 
 	// ========================================
 	// ROTATION
@@ -25,6 +33,8 @@ public final class RotationController {
 
 	public void cancel() {
 		target = null;
+		yawVelocity = 0;
+		pitchVelocity = 0;
 	}
 
 	public boolean isActive() {
@@ -34,6 +44,8 @@ public final class RotationController {
 	/** Applique un pas de rotation vers la cible demandée ce tick, puis oublie la demande. */
 	public void update(PlayerState state) {
 		if (target == null) {
+			yawVelocity = 0;   // plus de demande : la prochaine rotation repart de zéro (accélération progressive)
+			pitchVelocity = 0;
 			return;
 		}
 		LocalPlayer player = state.player();
@@ -45,8 +57,18 @@ public final class RotationController {
 		float yawDelta = yawDelta(eye, target, yaw);
 		float pitchDelta = pitchDelta(eye, target, pitch);
 
-		float newYaw = yaw + step(yawDelta, cfg.minYawSpeed, cfg.maxYawSpeed, cfg.rotationEaseFactor);
-		float newPitch = pitch + step(pitchDelta, cfg.minPitchSpeed, cfg.maxPitchSpeed, cfg.rotationEaseFactor);
+		float factor = humanizer.rotationSpeedFactor();
+		float yawStep = step(yawDelta, cfg.minYawSpeed * factor, cfg.maxYawSpeed * factor, cfg.rotationEaseFactor);
+		float pitchStep = step(pitchDelta, cfg.minPitchSpeed * factor, cfg.maxPitchSpeed * factor, cfg.rotationEaseFactor);
+		if (cfg.humanize) {
+			// La vitesse réelle rattrape la vitesse voulue avec une accélération bornée : démarrage et arrêt progressifs.
+			yawVelocity = approach(yawVelocity, yawStep, Math.max(0.8f, cfg.maxYawSpeed * 0.3f));
+			pitchVelocity = approach(pitchVelocity, pitchStep, Math.max(0.6f, cfg.maxPitchSpeed * 0.3f));
+			yawStep = limit(yawVelocity, yawDelta);
+			pitchStep = limit(pitchVelocity, pitchDelta);
+		}
+		float newYaw = yaw + yawStep;
+		float newPitch = pitch + pitchStep;
 
 		player.setYRot(newYaw);
 		player.setXRot(Mth.clamp(newPitch, -90.0f, 90.0f));
@@ -61,6 +83,15 @@ public final class RotationController {
 		float abs = Math.abs(delta);
 		float speed = Mth.clamp(abs * easeFactor, minSpeed, maxSpeed);
 		return Math.copySign(Math.min(abs, speed), delta);
+	}
+
+	private static float approach(float current, float wanted, float maxChange) {
+		return current + Mth.clamp(wanted - current, -maxChange, maxChange);
+	}
+
+	/** Empêche de dépasser la cible quand la vitesse va dans le bon sens. */
+	private static float limit(float velocity, float delta) {
+		return Math.signum(velocity) == Math.signum(delta) && Math.abs(velocity) > Math.abs(delta) ? delta : velocity;
 	}
 
 	// ========================================

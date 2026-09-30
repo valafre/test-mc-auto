@@ -44,6 +44,10 @@ public final class VoidgloomModule extends AbstractModule {
 	private boolean slayerOk;
 	private int endermenSeen;
 	private int bossesSeen;
+	private int mobsSeen;
+	private boolean targetIsBoss;       // false : Enderman normal farmé pour faire apparaître le boss
+	private int reactionTicks;          // délai de réaction humain avant d'agir sur une nouvelle cible
+	private int bossCheckTimer;
 	private boolean holdPosition;       // vrai après un repositionnement tant que la mécanique existe
 
 	@Override
@@ -56,8 +60,8 @@ public final class VoidgloomModule extends AbstractModule {
 		if (!slayerOk) {
 			return "en attente : \"" + ModConfig.get().slayerScoreboardKeyword + "\" absent du scoreboard";
 		}
-		return fsm.current() + (target != null ? " (cible ok)" : " (aucun Voidgloom à portée)")
-			+ " | Enderman vus: " + endermenSeen + ", Voidgloom: " + bossesSeen;
+		String cible = target == null ? " (aucune cible)" : targetIsBoss ? " (cible : BOSS)" : " (cible : Enderman)";
+		return fsm.current() + cible + " | Enderman vus: " + endermenSeen + ", à farmer: " + mobsSeen + ", Voidgloom: " + bossesSeen;
 	}
 
 	@Override
@@ -90,6 +94,9 @@ public final class VoidgloomModule extends AbstractModule {
 
 	private void resetState() {
 		target = null;
+		targetIsBoss = false;
+		reactionTicks = 0;
+		bossCheckTimer = 0;
 		mechanic = null;
 		handledMechanic = null;
 		moveTask = null;
@@ -134,6 +141,7 @@ public final class VoidgloomModule extends AbstractModule {
 			case TARGET_LOST -> {
 				stopActions(f);
 				target = null;
+				targetIsBoss = false;
 				mechanic = null;
 				handledMechanic = null;
 				holdPosition = false;
@@ -160,14 +168,48 @@ public final class VoidgloomModule extends AbstractModule {
 		searchTimer = cfg.targetSearchIntervalTicks - 1;
 		PlayerState ps = f.player();
 		VoidgloomTarget.Result result = VoidgloomTarget.find(f);
-		endermenSeen = result.endermen();
-		bossesSeen = result.bosses().size();
-		EnderMan picked = f.targetSelector().select(result.bosses(), ps.position(), null, cfg.targetSearchRange);
+		updateCounters(result);
+		double range = cfg.farmMobs ? Math.max(cfg.targetSearchRange, cfg.farmSearchRange) : cfg.targetSearchRange;
+		// Le boss est toujours prioritaire ; sinon on farme l'Enderman normal le plus proche pour le faire apparaître.
+		EnderMan boss = f.targetSelector().select(result.bosses(), ps.position(), null, range);
+		EnderMan picked = boss != null ? boss : f.targetSelector().select(result.mobs(), ps.position(), null, range);
 		if (picked != null) {
 			target = picked;
-			Debug.log("Voidgloom", () -> "Cible trouvée : " + f.entityInfo().resolve(ps.level(), picked));
+			targetIsBoss = boss != null;
+			reactionTicks = f.humanizer().nextReactionDelay();
+			Debug.log("Voidgloom", () -> (targetIsBoss ? "Boss trouvé : " : "Enderman à farmer : ")
+				+ f.entityInfo().resolve(ps.level(), picked));
 			fsm.transition(VoidgloomState.FOLLOWING_TARGET);
 		}
+	}
+
+	private void updateCounters(VoidgloomTarget.Result result) {
+		endermenSeen = result.endermen();
+		bossesSeen = result.bosses().size();
+		mobsSeen = result.mobs().size();
+	}
+
+	/** Pendant le farm : si un Voidgloom apparaît, on abandonne l'Enderman courant pour le boss. */
+	private boolean switchToBossIfSpawned(Framework f) {
+		ModConfig cfg = ModConfig.get();
+		if (bossCheckTimer-- > 0) {
+			return false;
+		}
+		bossCheckTimer = cfg.targetSearchIntervalTicks - 1;
+		VoidgloomTarget.Result result = VoidgloomTarget.find(f);
+		updateCounters(result);
+		EnderMan boss = f.targetSelector().select(result.bosses(), f.player().position(), null,
+			Math.max(cfg.targetSearchRange, cfg.farmSearchRange));
+		if (boss == null) {
+			return false;
+		}
+		Debug.log("Voidgloom", () -> "Le boss est apparu, changement de cible");
+		stopActions(f);
+		target = boss;
+		targetIsBoss = true;
+		reactionTicks = f.humanizer().nextReactionDelay();
+		fsm.transition(VoidgloomState.FOLLOWING_TARGET);
+		return true;
 	}
 
 	// ========================================
@@ -178,14 +220,24 @@ public final class VoidgloomModule extends AbstractModule {
 		ModConfig cfg = ModConfig.get();
 		PlayerState ps = f.player();
 
-		double keep = cfg.targetSearchRange * cfg.targetKeepRangeFactor;
+		double base = targetIsBoss ? cfg.targetSearchRange : Math.max(cfg.targetSearchRange, cfg.farmSearchRange);
+		double keep = base * cfg.targetKeepRangeFactor;
 		if (!TargetSelector.isValid(target) || target.position().distanceToSqr(ps.position()) > keep * keep) {
 			Debug.log("Voidgloom", () -> "Cible perdue");
 			fsm.transition(VoidgloomState.TARGET_LOST);
 			return;
 		}
 
-		BlockPos found = mechanics.poll(ps);
+		if (!targetIsBoss && switchToBossIfSpawned(f)) {
+			return;
+		}
+		if (reactionTicks > 0) { // réaction humaine : petite pause avant d'agir sur une nouvelle cible
+			reactionTicks--;
+			return;
+		}
+
+		// La mécanique au sol n'existe que pendant le combat contre le boss.
+		BlockPos found = targetIsBoss ? mechanics.poll(ps) : null;
 		if (found == null) {
 			handledMechanic = null;
 			if (holdPosition) { // la mécanique a disparu : on reprend le combat normal

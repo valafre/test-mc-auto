@@ -41,17 +41,21 @@ public final class AutoModScreen extends Screen {
 		y += ROW;
 		toggle(left, y, colW, "Exiger Slayer", () -> cfg.requireSlayer, () -> cfg.requireSlayer = !cfg.requireSlayer);
 		y += ROW;
+		toggle(left, y, colW, "Farmer Enderman", () -> cfg.farmMobs, () -> cfg.farmMobs = !cfg.farmMobs);
+		y += ROW;
+		toggle(left, y, colW, "Humaniser", () -> cfg.humanize, () -> cfg.humanize = !cfg.humanize);
+		y += ROW;
 		toggle(left, y, colW, "Debug (logs)", () -> cfg.debugMode, () -> cfg.debugMode = !cfg.debugMode);
 		y += ROW;
 		toggle(left, y, colW, "Sprint", () -> cfg.useSprint, () -> cfg.useSprint = !cfg.useSprint);
 		y += ROW;
 		toggle(left, y, colW, "Nom ArmorStand", () -> cfg.allowArmorStandNameplate,
 			() -> cfg.allowArmorStandNameplate = !cfg.allowArmorStandNameplate);
-		y += ROW;
-		toggle(left, y, colW, "Pos. au-dessus", () -> cfg.allowAbovePosition, () -> cfg.allowAbovePosition = !cfg.allowAbovePosition);
 
-		// Colonne droite : valeurs numériques
+		// Colonne droite : position + valeurs numériques
 		y = top;
+		toggle(right, y, colW, "Pos. au-dessus", () -> cfg.allowAbovePosition, () -> cfg.allowAbovePosition = !cfg.allowAbovePosition);
+		y += ROW;
 		stepper(right, y, colW, "Portée", () -> cfg.attackDistance, v -> cfg.attackDistance = Mth.clamp(v, 2.0, 6.0), 0.25);
 		y += ROW;
 		stepper(right, y, colW, "Approche", () -> cfg.approachDistance,
@@ -66,7 +70,7 @@ public final class AutoModScreen extends Screen {
 			v -> cfg.voidgloomRequiredLevel = (int) Mth.clamp(v, 0, 500), 1.0);
 
 		addRenderableWidget(Button.builder(Component.literal("Terminé"), b -> onClose())
-			.bounds(left, top + 6 * ROW + 6, 2 * colW + gap, BUTTON_H).build());
+			.bounds(left, top + 7 * ROW + 6, 2 * colW + gap, BUTTON_H).build());
 	}
 
 	private boolean isVoidgloomOn() {
