@@ -95,6 +95,9 @@ public final class DefaultCategories {
 		p.stepper("CPS max", () -> c.maxCps, v -> { c.maxCps = v; c.minCps = Math.min(c.minCps, v); }, 1, 1, 20);
 		p.toggle("Pauses de clic", () -> c.attackPauses, () -> c.attackPauses = !c.attackPauses);
 		p.toggle("Sprint", () -> c.useSprint, () -> c.useSprint = !c.useSprint);
+		p.toggle("Clic droit katana", () -> c.katanaClick, () -> c.katanaClick = !c.katanaClick);
+		p.stepper("Clic min (t)", () -> c.katanaClickMinTicks, v -> { c.katanaClickMinTicks = (int) v; c.katanaClickMaxTicks = Math.max(c.katanaClickMaxTicks, (int) v); }, 1, 20, 200);
+		p.stepper("Clic max (t)", () -> c.katanaClickMaxTicks, v -> { c.katanaClickMaxTicks = (int) v; c.katanaClickMinTicks = Math.min(c.katanaClickMinTicks, (int) v); }, 1, 20, 200);
 		p.toggle("Virages anticipés", () -> c.turnSlowdown, () -> c.turnSlowdown = !c.turnSlowdown);
 	}
 

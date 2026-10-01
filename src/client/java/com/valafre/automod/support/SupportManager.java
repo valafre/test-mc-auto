@@ -22,6 +22,8 @@ public final class SupportManager {
 	private int wandCooldown;
 	private int orbTicks = -1;          // ticks depuis la dernière pose ; -1 = pas posée pour ce combat
 	private int orbRetry;
+	private int abilityIn;               // ticks avant le prochain clic droit de katana
+	private final java.util.Random rng = new java.util.Random();
 	private int orbScanTimer;
 	private boolean orbSeen;
 	private String status = "-";
@@ -61,8 +63,14 @@ public final class SupportManager {
 		if (!bossFight) {
 			orbTicks = -1;
 			orbSeen = false;
-		} else if (cfg.orbEnabled) {
-			maintainOrb(f, cfg, ps, items);
+			abilityIn = 0; // au prochain boss, premier clic immédiat
+		} else {
+			if (cfg.orbEnabled) {
+				maintainOrb(f, cfg, ps, items);
+			}
+			if (cfg.katanaClick) {
+				clickKatana(cfg, ps, items);
+			}
 		}
 
 		updateShortStatus(fraction, bossFight);
@@ -70,6 +78,21 @@ public final class SupportManager {
 			+ " | Wand: " + slotText(items.findHotbarSlot(ps, cfg.healWandKeyword))
 			+ " | Orb: " + (!bossFight ? "inactive (hors boss)" : orbTicks < 0 ? "à poser"
 			: "posée il y a " + orbTicks / 20 + " s" + (orbSeen ? " (détectée)" : " (non détectée)"));
+	}
+
+	/** Clic droit du katana pendant le boss, toutes les 4,1 à 4,4 s ; seulement si c'est bien le katana qui est en main. */
+	private void clickKatana(ModConfig cfg, PlayerState ps, ItemUseController items) {
+		if (abilityIn > 0) {
+			abilityIn--;
+			return;
+		}
+		if (!items.isHolding(ps, cfg.weaponKeyword) || !items.useHeld(ps)) {
+			return; // pas de katana en main, ou un autre objet utilisé ce tick : on réessaie au tick suivant
+		}
+		int min = Math.max(1, cfg.katanaClickMinTicks);
+		int max = Math.max(min, cfg.katanaClickMaxTicks);
+		abilityIn = min + rng.nextInt(max - min + 1);
+		Debug.log("Support", () -> "Clic droit katana (prochain dans " + abilityIn + " ticks)");
 	}
 
 	private void updateShortStatus(float fraction, boolean bossFight) {

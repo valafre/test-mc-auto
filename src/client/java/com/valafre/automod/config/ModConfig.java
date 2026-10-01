@@ -66,6 +66,10 @@ public final class ModConfig {
 	public float healThresholdPercent = 50.0f;
 	/** Délai minimal entre deux utilisations de la Wand tant que les PV restent sous le seuil. */
 	public int wandCooldownTicks = 30;
+	/** Clic droit avec le katana (sa capacité) pendant le combat de boss, à intervalle tiré entre min et max (4,1 à 4,4 s). */
+	public boolean katanaClick = true;
+	public int katanaClickMinTicks = 82;
+	public int katanaClickMaxTicks = 88;
 	public boolean orbEnabled = true;
 	public String orbKeyword = "orb";
 	/** Textes (séparés par des virgules) d'un ArmorStand qui prouve que l'Orb est posée ; à vérifier avec la touche I. */
