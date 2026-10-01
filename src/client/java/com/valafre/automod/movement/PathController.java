@@ -195,6 +195,9 @@ public final class PathController {
 			}
 		}
 		cost += clearancePenalty(level, next);
+		if (!next.equals(goal)) {
+			cost += deadEndPenalty(level, next);
+		}
 		if (!avoid.isEmpty() && avoid.contains(next)) {
 			cost += 8.0;
 		}
@@ -206,6 +209,30 @@ public final class PathController {
 		Node node = new Node(next, current, g, g + heuristic(next, goal));
 		nodes.put(next.asLong(), node);
 		open.add(node);
+	}
+
+	/**
+	 * Possibilités de sortie : une case dont il ne reste qu'une issue (cul-de-sac, renfoncement, bout de couloir) est un
+	 * piège potentiel ; on l'évite fortement sauf si c'est le but. Test rapide : voisin orthogonal libre sur 2 blocs de
+	 * haut avec un sol dessous.
+	 */
+	private static double deadEndPenalty(Level level, BlockPos pos) {
+		int exits = 0;
+		for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.Plane.HORIZONTAL) {
+			BlockPos side = pos.relative(dir);
+			if (!solid(level, side) && !solid(level, side.above()) && solid(level, side.below())) {
+				exits++;
+			} else if (!solid(level, side) && !solid(level, side.above()) && !solid(level, side.below())) {
+				exits++; // descente possible (marche vers le vide) : une sortie, même si on évite de la prendre
+			} else if (!solid(level, side.above()) && !solid(level, pos.above()) && solid(level, side)) {
+				exits++; // marche d'un bloc à gravir
+			}
+		}
+		return exits <= 1 ? 4.0 : 0.0;
+	}
+
+	private static boolean solid(Level level, BlockPos p) {
+		return !level.getBlockState(p).getCollisionShape(level, p).isEmpty();
 	}
 
 	/**

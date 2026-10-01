@@ -56,6 +56,16 @@ public final class MovementController {
 	// Déblocage rapide : fenêtre courte de progrès, escalade de manoeuvres, cases à éviter.
 	/** Au-delà de cet écart (degrés) entre le regard et le point visé, on tourne la caméra plutôt que de marcher de biais. */
 	private static final float MAX_STRAFE_YAW = 60.0f;
+	private static final float PREDICT_TURN_DEG = 8.0f;
+	private static final double WALK_SPEED = 0.215;
+	private static final double SPRINT_SPEED = 0.28;
+	private static final int PREDICT_TICKS = 10;
+	private static final int IMMINENT_TICKS = 6;
+	private static final int VALIDATE_INTERVAL_TICKS = 4;
+	private static final int VALIDATE_NODES = 6;
+	private int validateTicks;
+	private int predictStall;
+	private Prediction lastPrediction;
 	private static final double FORWARD_ANGLE_ON = 70.0;
 	private static final double FORWARD_ANGLE_OFF = 90.0;
 	private boolean forwardOnly;
@@ -64,7 +74,7 @@ public final class MovementController {
 	private static final double LOOK_MIN = 0.5;
 	private static final int SAFE_REPLAN_COOLDOWN_TICKS = 10;
 	private int safeReplanCooldown;
-	private static final double SAFE_CHECK_LENGTH = 1.6;
+	private static final double SAFE_CHECK_LENGTH = 3.0;
 	private static final int FAST_WINDOW_TICKS = 8;
 	private static final double FAST_MIN_PROGRESS = 0.2;
 	private static final int MANEUVER_TICKS = 10;
@@ -145,6 +155,7 @@ public final class MovementController {
 			return MoveStatus.BLOCKED;
 		}
 
+		validatePathAhead(state);
 		waypoint = safeWaypoint(state, waypoint);
 		boolean maneuvering = updateUnstuck(state, owner, waypoint, horizontal);
 
@@ -233,6 +244,60 @@ public final class MovementController {
 		}
 		// Rien de plus loin : on vise quand même le point s'il est assez loin pour que la direction soit stable.
 		return dx * dx + dz * dz >= LOOK_MIN * LOOK_MIN ? waypoint : null;
+	}
+
+	/** Premier obstacle prévu sur la trajectoire simulée : tick et case. */
+	private record Prediction(int tick, BlockPos cell) {}
+
+	/**
+	 * Simule la trajectoire des prochains ticks (le joueur marche tout droit dans sa direction pendant que la caméra tourne
+	 * vers {@code waypoint} à vitesse limitée) et renvoie le premier endroit où la boîte du joueur toucherait un bloc ou
+	 * n'aurait plus de sol. C'est la trajectoire RÉELLE qui est testée, pas la ligne idéale vers le point : en tournant, on
+	 * coupe les coins, et c'est là qu'on se retrouve collé à un mur.
+	 */
+	private Prediction predictCollision(PlayerState state, Vec3 waypoint, double speed, int ticks) {
+		Vec3 pos = state.position();
+		if (waypoint.y > pos.y + 0.1 || waypoint.y < pos.y - 0.6) {
+			return null; // marches / demi-dalles / chutes : traitées par le chemin et stepAhead
+		}
+		float yaw = state.yaw();
+		float target = RotationController.computeYaw(pos, waypoint);
+		double x = pos.x;
+		double z = pos.z;
+		for (int i = 1; i <= ticks; i++) {
+			float err = net.minecraft.util.Mth.wrapDegrees(target - yaw);
+			yaw += Math.max(-PREDICT_TURN_DEG, Math.min(PREDICT_TURN_DEG, err));
+			double rad = Math.toRadians(yaw);
+			x += -Math.sin(rad) * speed;
+			z += Math.cos(rad) * speed;
+			boolean ground = Walkability.supportedAt(state.level(), x, pos.y, z)
+				|| Walkability.supportedAt(state.level(), x, pos.y - 0.6, z) || Walkability.supportedAt(state.level(), x, pos.y - 1.1, z);
+			if (!Walkability.bodyFreeAt(state.level(), x, pos.y, z, 0.0) || !ground) {
+				return new Prediction(i, BlockPos.containing(x, pos.y + 0.05, z));
+			}
+		}
+		return null;
+	}
+
+	/** Revalide les prochains nœuds du chemin (monde modifié, dérive du joueur) ; un tronçon devenu mauvais force un recalcul. */
+	private void validatePathAhead(PlayerState state) {
+		if (path.isEmpty() || ++validateTicks < VALIDATE_INTERVAL_TICKS) {
+			return;
+		}
+		validateTicks = 0;
+		Vec3 prev = state.position();
+		for (int i = pathIndex; i < Math.min(path.size(), pathIndex + VALIDATE_NODES); i++) {
+			BlockPos n = path.get(i);
+			Vec3 c = new Vec3(n.getX() + 0.5, Walkability.standHeight(state.level(), n), n.getZ() + 0.5);
+			if (!Walkability.segmentWalkable(state.level(), prev, c, 0.0, false)) {
+				paths.avoid(n);
+				ticksSincePath = Integer.MAX_VALUE / 2;
+				forbidLineTicks = 10;
+				Debug.log("Movement", () -> "Chemin devenu mauvais en avant, recalcul");
+				return;
+			}
+			prev = c;
+		}
 	}
 
 	/** Ligne droite franchissable (à plat, avec marge) entre le joueur et {@code dest} ? */
@@ -547,6 +612,25 @@ public final class MovementController {
 			double angle = Math.toDegrees(Math.atan2(Math.abs(side), fwd));
 			boolean walk = forwardOn ? angle < FORWARD_ANGLE_OFF || (angle < 100 && len > 3.0)
 				: angle < FORWARD_ANGLE_ON;
+			// Trajectoire simulée : si elle finit dans un obstacle dans les prochains ticks, on n'avance pas (on tourne d'abord).
+			Prediction pred = walk ? predictCollision(state, waypoint, WALK_SPEED, PREDICT_TICKS) : null;
+			boolean imminent = pred != null && pred.tick() <= IMMINENT_TICKS;
+			if (imminent) {
+				walk = false;
+				// Déjà aligné et la trajectoire reste mauvaise : c'est le chemin qui est mauvais, pas l'orientation.
+				if (angle < 15.0 && ++predictStall >= 4) {
+					paths.avoid(pred.cell());
+					ticksSincePath = Integer.MAX_VALUE / 2;
+					ticksSinceLineCheck = Integer.MAX_VALUE / 2;
+					forbidLineTicks = 20;
+					lineClear = false;
+					predictStall = 0;
+					Debug.log("Movement", () -> "Trajectoire prévue dans un obstacle, nouveau chemin");
+				}
+			} else {
+				predictStall = 0;
+			}
+			lastPrediction = pred;
 			forwardOn = walk && !braking;
 			backOn = false;
 			leftOn = false;
@@ -571,7 +655,8 @@ public final class MovementController {
 		// On lève le pied (pas de sprint) juste avant un virage serré du chemin, comme un joueur qui anticipe.
 		boolean sharpTurn = cfg.turnSlowdown && len < 2.5 && turnFactor(pos) > 0.55;
 		boolean sprint = cfg.useSprint && forwardOn && fwd > 0.9 && distToDest > cfg.slowDistance && !sharpTurn
-			&& sprintLaneClear(state, dx, dz, len);
+			&& sprintLaneClear(state, dx, dz, len)
+			&& (!forwardOnly || predictCollision(state, waypoint, SPRINT_SPEED, 14) == null);
 		input.request(owner, Key.SPRINT, sprint);
 
 		if (jumpCooldown > 0) {
