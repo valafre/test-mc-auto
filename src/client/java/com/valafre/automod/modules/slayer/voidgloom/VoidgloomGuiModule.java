@@ -66,6 +66,8 @@ public final class VoidgloomGuiModule implements GuiModule {
 			.toggle("Zealot", null, () -> c().farmsMobType("zealot"), v -> c().setFarmMobType("zealot", v))
 			.toggle("Voidling Fanatic", null, () -> c().farmsMobType("voidling fanatic"), v -> c().setFarmMobType("voidling fanatic", v))
 			.toggle("Accepter les mobs perchés", "Cibles en hauteur, difficiles à atteindre", () -> c().acceptElevatedMobs, v -> c().acceptElevatedMobs = v)
+			.slider("Angle de vue des mobs", "Ignore les mobs apparus derrière vous au-delà de cet angle (180 = tout autour)",
+				() -> c().farmViewAngleDeg, v -> c().farmViewAngleDeg = (float) v, 60, 180, 5, 0, "°")
 			.toggle("Préférer les mobs à l'écran", "Favorise les cibles visibles", () -> c().preferOnScreen, v -> c().preferOnScreen = v);
 		b.card("Portées")
 			.slider("Rayon de farm", "Distance de recherche des mobs", () -> c().farmSearchRange, v -> c().farmSearchRange = v, 8, 48, 2, 0, " m")
@@ -110,6 +112,8 @@ public final class VoidgloomGuiModule implements GuiModule {
 	private static void movement(ConfigPageBuilder b) {
 		b.card("Chemin")
 			.number("Nœuds max du chemin", "Limite de recherche du pathfinding", () -> c().pathMaxNodes, v -> c().pathMaxNodes = (int) v, 100, 6000, 100, 0)
+			.slider("Chute maximale", "Descend de plusieurs blocs plutôt que de faire un long détour (monter reste limité à 1 bloc)",
+				() -> c().maxDropBlocks, v -> c().maxDropBlocks = (int) v, 1, 12, 1, 0, " blocs")
 			.slider("Recalcul du chemin", "Ticks entre deux recalculs", () -> c().pathRecomputeIntervalTicks, v -> c().pathRecomputeIntervalTicks = (int) v, 2, 40, 1, 0, " t")
 			.slider("Délai de déplacement", "Ticks avant d'abandonner un trajet", () -> c().moveTimeoutTicks, v -> c().moveTimeoutTicks = (int) v, 40, 600, 10, 0, " t")
 			.slider("Transition entre cibles", "Ticks de transition maximum", () -> c().transitionMaxTicks, v -> c().transitionMaxTicks = (int) v, 0, 20, 1, 0, " t");

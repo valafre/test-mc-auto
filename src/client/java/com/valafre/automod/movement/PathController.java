@@ -19,7 +19,6 @@ import java.util.PriorityQueue;
  */
 public final class PathController {
 
-	private static final int MAX_DROP = 3;
 	/** Dénivelé maximal franchissable en sautant (le saut monte d'environ 1,25). */
 	private static final double MAX_RISE = 1.2;
 	/** Jusqu'à cette hauteur on monte en marchant, sans sauter. */
@@ -149,7 +148,7 @@ public final class PathController {
 			}
 		} else if (Walkability.isBodyFree(level, side)) {
 			// Vide devant : descente (chute jusqu'à MAX_DROP blocs).
-			for (int k = 1; k <= MAX_DROP; k++) {
+			for (int k = 1; k <= com.valafre.automod.config.ModConfig.get().maxDropBlocks; k++) {
 				BlockPos lower = side.below(k);
 				if (Walkability.canStandAt(level, lower)) {
 					next = lower;

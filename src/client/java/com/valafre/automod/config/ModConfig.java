@@ -143,6 +143,8 @@ public final class ModConfig {
 	public boolean acceptElevatedMobs = false;
 	/** Préférer les mobs visibles à l'écran (champ de vision) quand on choisit une cible. */
 	public boolean preferOnScreen = true;
+	/** Demi-angle (degrés, depuis la direction du regard) dans lequel un mob peut être pris pour cible ; 180 = tout autour. */
+	public float farmViewAngleDeg = 100.0f;
 
 	// ========================================
 	// HUMANISATION
@@ -242,6 +244,8 @@ public final class ModConfig {
 	/** En dessous de cette distance (oeil -> hitbox) on recule légèrement pour garder la portée. */
 	public double combatMinDistance = 1.9;
 	public int pathMaxNodes = 1500;
+	/** Chute maximale (blocs) que le chemin accepte pour rejoindre une cible plus bas, au lieu de faire un long détour. */
+	public int maxDropBlocks = 6;
 	public int pathRecomputeIntervalTicks = 10;
 	/** Durée maximale d'un déplacement vers une position avant abandon. */
 	public int moveTimeoutTicks = 200;

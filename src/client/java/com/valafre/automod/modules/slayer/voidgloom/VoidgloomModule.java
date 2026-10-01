@@ -305,7 +305,7 @@ public final class VoidgloomModule extends AbstractModule {
 		double range = cfg.farmMobs ? Math.max(cfg.targetSearchRange, cfg.farmSearchRange) : cfg.targetSearchRange;
 		// Le boss est toujours prioritaire ; sinon on farme l'Enderman normal le plus proche pour le faire apparaître.
 		EnderMan boss = f.targetSelector().select(result.bosses(), ps.position(), null, range);
-		EnderMan picked = boss != null ? boss : f.targetSelector().selectBy(reachable(result.mobs()), m -> approachCost(f, ps, m));
+		EnderMan picked = boss != null ? boss : f.targetSelector().selectBy(reachable(f, result.mobs()), m -> approachCost(f, ps, m));
 		if (picked != null) {
 			target = picked;
 			noLosTicks = 0;
@@ -325,9 +325,15 @@ public final class VoidgloomModule extends AbstractModule {
 	}
 
 	/** Retire les Enderman récemment abandonnés car inaccessibles (derrière un mur, sur une autre plateforme...). */
-	private java.util.List<EnderMan> reachable(java.util.List<EnderMan> mobs) {
+	private java.util.List<EnderMan> reachable(Framework f, java.util.List<EnderMan> mobs) {
 		skipped.values().removeIf(until -> until <= clock);
-		return mobs.stream().filter(m -> !skipped.containsKey(m.getId())).toList();
+		PlayerState ps = f.player();
+		float limit = ModConfig.get().farmViewAngleDeg;
+		// Un mob apparu dans le dos n'est pas censé être vu : on ne se retourne pas pour lui (la cible déjà suivie reste valable).
+		return mobs.stream().filter(m -> !skipped.containsKey(m.getId()))
+			.filter(m -> limit <= 0 || limit >= 180 || m == target
+				|| Math.abs(RotationController.yawDelta(ps.eyePosition(), m.position(), ps.yaw())) <= limit)
+			.toList();
 	}
 
 	/** PV de la cible en fraction (0..1) d'après son nametag ou ses PV réels ; -1 si inconnus. */
@@ -353,7 +359,7 @@ public final class VoidgloomModule extends AbstractModule {
 		}
 		EnderMan current = target;
 		f.hints().setGlance(f.targetSelector().selectBy(
-			reachable(result.mobs()).stream().filter(m -> m != current).toList(), m -> approachCost(f, ps, m)));
+			reachable(f, result.mobs()).stream().filter(m -> m != current).toList(), m -> approachCost(f, ps, m)));
 	}
 
 	/** Toutes les ~1 s : un Enderman nettement plus proche que celui qu'on poursuit ? Alors on change (sauf si on le frappe déjà). */
@@ -367,7 +373,7 @@ public final class VoidgloomModule extends AbstractModule {
 		if (TargetInfo.of(ps, target).distance() <= cfg.attackDistance && f.combat().hasStableLineOfSight(ps, target)) {
 			return false; // déjà au contact : on ne lâche pas la cible qu'on frappe
 		}
-		EnderMan nearest = f.targetSelector().select(reachable(result.mobs()), ps.position(), null,
+		EnderMan nearest = f.targetSelector().select(reachable(f, result.mobs()), ps.position(), null,
 			Math.max(cfg.targetSearchRange, cfg.farmSearchRange));
 		if (nearest == null || nearest == target) {
 			return false;
