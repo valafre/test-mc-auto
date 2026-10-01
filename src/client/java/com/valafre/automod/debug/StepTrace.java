@@ -85,25 +85,10 @@ public final class StepTrace {
 		return String.format(Locale.ROOT, "(%.3f, %.3f, %.3f)", p.x, p.y, p.z);
 	}
 
-	/** Premier échantillon du balayage qui échoue (même échantillonnage que {@link Walkability#segmentWalkable}). */
+	/** Premier point où le balayage (hauteur des pieds suivant le vrai sol) échoue, ou « aucun ». */
 	private static String firstFailure(Level level, Vec3 from, Vec3 to, double margin) {
-		double dx = to.x - from.x;
-		double dz = to.z - from.z;
-		double length = Math.sqrt(dx * dx + dz * dz);
-		int samples = Math.max(1, (int) Math.ceil(length / 0.25));
-		boolean stepped = Math.abs(to.y - from.y) > 0.6;
-		boolean slight = !stepped && Math.abs(to.y - from.y) > 0.05;
-		for (int i = 1; i <= samples; i++) {
-			double t = (double) i / samples;
-			double x = from.x + dx * t;
-			double z = from.z + dz * t;
-			double y = (stepped || slight) ? (t < 0.5 ? from.y : to.y) : from.y;
-			if (!Walkability.bodyFreeAt(level, x, y, z, margin)) {
-				return String.format(Locale.ROOT, "t=%.2f (échantillon %d/%d) corps testé à y=%.3f au centre (%.2f, %.2f) [modèle: hauteur de départ avant 50 %%, d'arrivée après]",
-					t, i, samples, y, x, z);
-			}
-		}
-		return "aucun";
+		BlockPos at = Walkability.sweepBlockedAt(level, from, to, margin, Walkability.JUMP_HEIGHT, 6.5, false);
+		return at == null ? "aucun" : String.format(Locale.ROOT, "bloqué près de %s (balayage à hauteur de sol réelle)", block(level, at));
 	}
 
 	// ========================================
@@ -218,25 +203,44 @@ public final class StepTrace {
 			dirX = -Math.sin(rad);
 			dirZ = Math.cos(rad);
 		}
-		BlockPos startCell = ps.player().blockPosition();          // utilisé comme départ du pathfinding
-		BlockPos aboveFloor = floorCell.above();                      // convention « case des pieds » de Walkability
+		BlockPos cell = Walkability.cellOf(pos);
 		double rise = Walkability.riseAhead(level, pos, dirX, dirZ);
 		Vec3 ahead = new Vec3(pos.x + dirX * 1.0, pos.y, pos.z + dirZ * 1.0);
 		boolean seg0 = Walkability.segmentWalkable(level, pos, ahead, 0.0, false);
 		boolean seg12 = Walkability.segmentWalkable(level, pos, ahead, 0.12, true);
 		BlockPos aheadFloor = BlockPos.containing(pos.x + dirX * 0.9, pos.y - 0.05, pos.z + dirZ * 0.9);
 		String line = String.format(Locale.ROOT,
-			"[STEP] %s | block=%s | playerFeetY=%.4f (surface réelle=%.4f) | départ A* = blockPosition()=(%d,%d,%d) vs case au-dessus du sol=(%d,%d,%d)"
-				+ " | standHeight(blockPosition)=%.4f standHeight(case au-dessus)=%.4f | canStandAt(blockPosition)=%s canStandAt(case au-dessus)=%s isBodyFree(blockPosition)=%s"
-				+ " | rise(devant)=%s | bodyFreeAt(joueur)=%s supported=%s | segmentWalkable(1 bloc devant, marge 0)=%s (marge 0.12+sol)=%s"
+			"[STEP] %s | rise(devant)=%s | segmentWalkable(1 bloc devant, marge 0)=%s (marge 0.12+sol)=%s"
 				+ " | sol devant: %s | navigation: statut=%s waypointValide=%s sûr=%s refus=%s point exécuté=%s",
-			kind, block(level, floorCell), pos.y, floorCell.getY() + top, startCell.getX(), startCell.getY(), startCell.getZ(),
-			aboveFloor.getX(), aboveFloor.getY(), aboveFloor.getZ(), Walkability.standHeight(level, startCell),
-			Walkability.standHeight(level, aboveFloor), Walkability.canStandAt(level, startCell), Walkability.canStandAt(level, aboveFloor),
-			Walkability.isBodyFree(level, startCell), Double.isInfinite(rise) ? "∞" : String.format(Locale.ROOT, "%.4f", rise),
-			Walkability.bodyFreeAt(level, pos.x, pos.y, pos.z, 0.0), Walkability.supportedAt(level, pos.x, pos.y, pos.z), seg0, seg12,
+			kind, Double.isInfinite(rise) ? "∞" : String.format(Locale.ROOT, "%.4f", rise), seg0, seg12,
 			block(level, aheadFloor), f.movement().lastStatus(), nav.waypointValid(), nav.safe(), nav.refusal(),
 			nav.executedPoint() == null ? "—" : v(nav.executedPoint()));
 		Debug.log("STEP", () -> line);
+		navHeight(f, level, pos, floorCell, cell, nav);
+	}
+
+	/**
+	 * [NAV HEIGHT] : représentation de la hauteur du sol pour la case courante. cell = case de grille des pieds, shapeTop =
+	 * dessus de la collision du bloc dessous (0.5 = demi-dalle), feetY = hauteur réelle des pieds, et la hauteur lue par
+	 * chaque système (A*, navigation locale, positionneur de combat, mouvement).
+	 */
+	private static void navHeight(Framework f, Level level, Vec3 pos, BlockPos floorCell, BlockPos cell, MovementController.DebugState nav) {
+		double surface = Walkability.surfaceY(level, cell);
+		double local = Walkability.feetHeightAt(level, pos.x, pos.z, pos.y, Walkability.JUMP_HEIGHT, 1.1, 0.12);
+		String line = String.format(Locale.ROOT,
+			"[NAV HEIGHT] cell=(%d,%d,%d) block=%s shapeTop=%s feetY=%.4f surfaceY(cell)=%s bodyFree=%s supported=%s"
+				+ " | A*.standHeight(cell)=%.4f A*.waypointY=%s | LocalNavigator.feetHeightAt=%s | CombatPositioner.standY=%s"
+				+ " | MovementController.executedY=%s",
+			cell.getX(), cell.getY(), cell.getZ(), level.getBlockState(floorCell).getBlock(),
+			String.format(Locale.ROOT, "%.4f", Double.isNaN(shapeTop(level, floorCell)) ? Double.NaN : shapeTop(level, floorCell)), pos.y,
+			Double.isNaN(surface) ? "NaN" : String.format(Locale.ROOT, "%.4f", surface),
+			Walkability.bodyFreeAt(level, pos.x, pos.y, pos.z, 0.0), Walkability.supportedAt(level, pos.x, pos.y, pos.z),
+			Walkability.standHeight(level, cell),
+			nav.globalWaypoint() == null ? "—" : String.format(Locale.ROOT, "%.4f", nav.globalWaypoint().y),
+			Double.isNaN(local) ? "NaN" : String.format(Locale.ROOT, "%.4f", local),
+			Double.isNaN(com.valafre.automod.movement.CombatPositioner.debugLastStandY) ? "—"
+				: String.format(Locale.ROOT, "%.4f", com.valafre.automod.movement.CombatPositioner.debugLastStandY),
+			nav.executedPoint() == null ? "—" : String.format(Locale.ROOT, "%.4f", nav.executedPoint().y));
+		Debug.log("NAV HEIGHT", () -> line);
 	}
 }

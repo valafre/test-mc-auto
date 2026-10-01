@@ -76,7 +76,7 @@ public final class PositionController {
 	private Candidate search(PlayerState state, Request request, boolean touchOnly) {
 		ModConfig cfg = ModConfig.get();
 		Level level = state.level();
-		BlockPos playerPos = state.player().blockPosition();
+		BlockPos playerPos = Walkability.cellOf(state.position());
 		Candidate best = null;
 
 		for (Slot slot : Slot.values()) {

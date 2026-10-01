@@ -2,12 +2,9 @@ package com.valafre.automod.movement;
 
 import com.valafre.automod.core.PlayerState;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
-import net.minecraft.world.phys.shapes.VoxelShape;
 
 /**
  * Navigation locale prédictive. Le chemin global (A*) ou la position de combat dit OÙ aller ; ce navigateur décide
@@ -228,34 +225,19 @@ public final class LocalNavigator {
 		for (int i = 1; i <= steps; i++) {
 			double nx = x + dx * stepLen;
 			double nz = z + dz * stepLen;
-			double ny = y;
-			if (!Walkability.bodyFreeAt(level, nx, ny, nz, margin)) {
+			// Hauteur réelle des pieds au prochain pas : surface de collision sous l'empreinte, marche (<= 0,6) ou saut (<= 1,15),
+			// descente d'au plus 1,1 ; NaN = ni place pour le corps, ni sol (obstacle ou vide).
+			double ny = Walkability.feetHeightAt(level, nx, nz, y, JUMP_REACH, 1.1, margin);
+			if (Double.isNaN(ny)) {
 				double rise = Walkability.riseAhead(level, new Vec3(x, y, z), dx, dz);
-				if (rise > 0.05 && rise <= JUMP_REACH) {
-					ny = y + rise;
-					if (!Walkability.bodyFreeAt(level, nx, ny, nz, margin)) {
-						blocked = BlockPos.containing(nx, y + 0.05, nz);
-						com.valafre.automod.debug.StepTrace.rolloutBlock(level, "MARCHE_CORPS_BLOQUE_APRES_MONTEE", i, new Vec3(x, y, z), nx, ny, nz, headingDeg, rise, Double.NaN);
-						break;
-					}
-					if (rise > 0.6 && jumpStep < 0) {
-						jumpStep = i;
-					}
-				} else {
-					blocked = BlockPos.containing(nx, y + 0.05, nz);
-					com.valafre.automod.debug.StepTrace.rolloutBlock(level, "CORPS_BLOQUE_SANS_MONTEE_POSSIBLE", i, new Vec3(x, y, z), nx, ny, nz, headingDeg, rise, Double.NaN);
-					break;
-				}
+				blocked = BlockPos.containing(nx, y + 0.05, nz);
+				com.valafre.automod.debug.StepTrace.rolloutBlock(level, Walkability.bodyFreeAt(level, nx, y, nz, margin)
+					? "SOL_ABSENT_SOUS_L_EMPREINTE" : "CORPS_BLOQUE_SANS_SURFACE_PRATICABLE",
+					i, new Vec3(x, y, z), nx, y, nz, headingDeg, rise, Double.NaN);
+				break;
 			}
-			if (!Walkability.supportedAt(level, nx, ny, nz)) {
-				double top = groundTop(level, nx, nz, ny, ny - 1.1);
-				if (Double.isNaN(top) || !Walkability.bodyFreeAt(level, nx, top, nz, margin)) {
-					blocked = BlockPos.containing(nx, ny - 0.5, nz); // vide devant : bord de plateforme
-					com.valafre.automod.debug.StepTrace.rolloutBlock(level, Double.isNaN(top) ? "SOL_ABSENT_SOUS_LE_CENTRE" : "CENTRE_SANS_APPUI_PUIS_CORPS_BLOQUE_A_LA_HAUTEUR_DU_SOL_INFERIEUR",
-						i, new Vec3(x, y, z), nx, ny, nz, headingDeg, Double.NaN, top);
-					break;
-				}
-				ny = top;
+			if (ny > y + 0.6 && jumpStep < 0) {
+				jumpStep = i;
 			}
 			x = nx;
 			y = ny;
@@ -269,24 +251,5 @@ public final class LocalNavigator {
 			}
 		}
 		return new Rollout(clear, new Vec3(x, y, z), jumpStep, comfyCount == 0 ? 1.0 : (double) comfy / comfyCount, blocked);
-	}
-
-	/** Hauteur de la surface praticable la plus haute dans [yLo, yHi] sous le point (x, z), ou NaN. */
-	private static double groundTop(Level level, double x, double z, double yHi, double yLo) {
-		int bx = Mth.floor(x);
-		int bz = Mth.floor(z);
-		for (int by = Mth.floor(yHi + 0.01); by >= Mth.floor(yLo) - 1; by--) {
-			BlockPos p = new BlockPos(bx, by, bz);
-			BlockState state = level.getBlockState(p);
-			VoxelShape shape = state.getCollisionShape(level, p);
-			if (shape.isEmpty() || Walkability.isHazard(state)) {
-				continue;
-			}
-			double top = by + shape.max(Direction.Axis.Y);
-			if (top <= yHi + 0.01 && top >= yLo) {
-				return top;
-			}
-		}
-		return Double.NaN;
 	}
 }

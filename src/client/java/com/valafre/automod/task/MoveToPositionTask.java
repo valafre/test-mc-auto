@@ -76,7 +76,7 @@ public final class MoveToPositionTask extends Task {
 			Debug.log("Movement", () -> "Destination devenue inaccessible " + destination);
 			return TaskStatus.FAILED;
 		}
-		Vec3 target = new Vec3(destination.getX() + 0.5, destination.getY(), destination.getZ() + 0.5);
+		Vec3 target = new Vec3(destination.getX() + 0.5, com.valafre.automod.movement.Walkability.standHeight(f.player().level(), destination), destination.getZ() + 0.5);
 		if (pressAgainst != null) {
 			if (isTouching(f, pressAgainst, TOUCH_TOLERANCE)) {
 				Debug.log("Movement", () -> "Collé au bloc " + pressAgainst);

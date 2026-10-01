@@ -1,7 +1,6 @@
 package com.valafre.automod.movement;
 
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
@@ -21,20 +20,110 @@ public final class Walkability {
 
 	private Walkability() {}
 
-	/** Le joueur peut-il se tenir debout avec les pieds dans la case {@code feet} (sol solide, corps libre) ? */
-	public static boolean canStandAt(Level level, BlockPos feet) {
-		if (!isInWorld(level, feet)) {
-			return false;
-		}
-		BlockPos below = feet.below();
-		BlockState floor = level.getBlockState(below);
-		if (floor.getCollisionShape(level, below).isEmpty() || isHazard(floor)) {
-			return false;
-		}
-		return isBodyFree(level, feet);
+	/** Hauteur de marche maximale (sans saut). */
+	public static final double STEP_HEIGHT = 0.6;
+	/** Hauteur maximale franchissable en sautant. */
+	public static final double JUMP_HEIGHT = 1.2;
+
+	// ========================================
+	// REPRÉSENTATION DE LA HAUTEUR DU SOL
+	// ========================================
+	// Une CASE (BlockPos) n'est qu'une position de grille : celle qui contient les pieds, soit floor(feetY + 0,001).
+	// La hauteur réelle des pieds (feetY) est le dessus de la plus haute forme de collision sous l'empreinte 0,6 x 0,6 du
+	// joueur : une demi-dalle donne y + 0,5, un bloc plein y + 1. Tout le reste (A*, waypoints, navigation locale, combat)
+	// lit cette hauteur ICI, jamais un numéro de case.
+
+	/** Case de grille contenant les pieds (convention unique : la case, pas le bloc sous les pieds). */
+	public static BlockPos cellOf(Vec3 feet) {
+		return BlockPos.containing(feet.x, feet.y + 0.001, feet.z);
 	}
 
-	/** Le corps (0.6 x 1.8) du joueur tient-il dans cette case sans collision, sans liquide ni danger ? */
+	/**
+	 * Dessus des formes de collision (non dangereuses) qui touchent l'empreinte du joueur centrée en (x, z), compris dans
+	 * [yLo, yHi], triés par ordre croissant. Générique : lit les AABB de collision, aucun cas particulier de bloc.
+	 */
+	public static List<Double> surfaceTops(Level level, double x, double z, double yLo, double yHi) {
+		List<Double> tops = new ArrayList<>();
+		int x0 = (int) Math.floor(x - HALF_WIDTH);
+		int x1 = (int) Math.floor(x + HALF_WIDTH);
+		int z0 = (int) Math.floor(z - HALF_WIDTH);
+		int z1 = (int) Math.floor(z + HALF_WIDTH);
+		BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
+		for (int by = (int) Math.floor(yHi); by >= (int) Math.floor(yLo) - 1; by--) {
+			for (int bx = x0; bx <= x1; bx++) {
+				for (int bz = z0; bz <= z1; bz++) {
+					p.set(bx, by, bz);
+					if (!isInWorld(level, p)) {
+						continue;
+					}
+					BlockState state = level.getBlockState(p);
+					VoxelShape shape = state.getCollisionShape(level, p);
+					if (shape.isEmpty() || isHazard(state)) {
+						continue;
+					}
+					for (AABB box : shape.toAabbs()) {
+						double top = by + box.maxY;
+						if (top < yLo - 1.0E-6 || top > yHi + 1.0E-6) {
+							continue;
+						}
+						if (bx + box.maxX <= x - HALF_WIDTH || bx + box.minX >= x + HALF_WIDTH
+							|| bz + box.maxZ <= z - HALF_WIDTH || bz + box.minZ >= z + HALF_WIDTH) {
+							continue; // ne touche pas l'empreinte
+						}
+						if (!tops.contains(top)) {
+							tops.add(top);
+						}
+					}
+				}
+			}
+		}
+		Collections.sort(tops);
+		return tops;
+	}
+
+	/**
+	 * Hauteur réelle des pieds en (x, z) pour un joueur qui était à la hauteur y : la surface où le corps tient (marge
+	 * comprise), comprise entre y - down et y + up, la plus proche de y (à égalité la plus haute). NaN si aucune.
+	 */
+	public static double feetHeightAt(Level level, double x, double z, double y, double up, double down, double margin) {
+		double best = Double.NaN;
+		for (double top : surfaceTops(level, x, z, y - down, y + up)) {
+			if (!bodyFreeAt(level, x, top, z, margin)) {
+				continue;
+			}
+			if (Double.isNaN(best) || Math.abs(top - y) < Math.abs(best - y) - 1.0E-9
+				|| (Math.abs(Math.abs(top - y) - Math.abs(best - y)) <= 1.0E-9 && top > best)) {
+				best = top;
+			}
+		}
+		return best;
+	}
+
+	/** Hauteur réelle des pieds pour la case {@code cell} (sol praticable où le corps tient), ou NaN. */
+	public static double surfaceY(Level level, BlockPos cell) {
+		if (!isInWorld(level, cell)) {
+			return Double.NaN;
+		}
+		double x = cell.getX() + 0.5;
+		double z = cell.getZ() + 0.5;
+		List<Double> tops = surfaceTops(level, x, z, cell.getY(), cell.getY() + 0.999);
+		for (int i = tops.size() - 1; i >= 0; i--) {
+			if (bodyFreeAt(level, x, tops.get(i), z, 0.0)) {
+				return tops.get(i);
+			}
+		}
+		return Double.NaN;
+	}
+
+	/** Le joueur peut-il se tenir debout dans cette case : une surface réelle sous l'empreinte ET le corps (0,6 x 1,8) libre à cette hauteur ? */
+	public static boolean canStandAt(Level level, BlockPos cell) {
+		return !Double.isNaN(surfaceY(level, cell));
+	}
+
+	/**
+	 * Le corps du joueur tient-il dans cette case (boîte alignée sur la case, depuis son bas) sans collision, liquide ni danger ?
+	 * Test grossier de « case d'air » ; pour la hauteur réelle utiliser {@link #surfaceY}.
+	 */
 	public static boolean isBodyFree(Level level, BlockPos feet) {
 		if (!isInWorld(level, feet)) {
 			return false;
@@ -49,21 +138,22 @@ public final class Walkability {
 	}
 
 	/**
-	 * Hauteur monde de la surface sur laquelle on se tient quand les pieds sont dans la case {@code feet} : dessus de la
-	 * forme de collision du bloc dessous (une demi-dalle donne y + 0,5, un bloc plein y + 1). C'est la vraie hauteur,
-	 * pas un simple numéro de case.
+	 * Hauteur monde des pieds quand ils sont dans la case {@code cell} : surface réelle (voir {@link #surfaceY}). Pour une case
+	 * non praticable : dessus de la plus haute forme de collision de la case ou de celle dessous, à défaut le bas de la case.
 	 */
-	public static double standHeight(Level level, BlockPos feet) {
-		BlockPos below = feet.below();
-		VoxelShape shape = level.getBlockState(below).getCollisionShape(level, below);
-		return shape.isEmpty() ? below.getY() : below.getY() + shape.max(Direction.Axis.Y);
+	public static double standHeight(Level level, BlockPos cell) {
+		double y = surfaceY(level, cell);
+		if (!Double.isNaN(y)) {
+			return y;
+		}
+		List<Double> tops = surfaceTops(level, cell.getX() + 0.5, cell.getZ() + 0.5, cell.getY(), cell.getY() + 0.999);
+		return tops.isEmpty() ? cell.getY() : tops.get(tops.size() - 1);
 	}
 
 	/**
-	 * Hauteur à gravir devant un joueur dont les pieds sont en {@code feet} (coordonnées réelles) dans la direction
-	 * (dx, dz) : 0 si la voie est libre, sinon le dénivelé jusqu'à la première surface où le corps (1,8) tient.
-	 * {@code POSITIVE_INFINITY} si aucune place. Avec des demi-dalles, 1 bloc apparent peut valoir 0,5 (on monte en marchant)
-	 * ou 1,5 (impossible même en sautant) : c'est ce calcul qui permet de ne sauter que quand c'est utile.
+	 * Dénivelé à franchir devant un joueur dont les pieds sont en {@code feet} dans la direction (dx, dz) : 0 si la voie est
+	 * libre à plat, sinon (positif = monter, négatif = descendre) l'écart jusqu'à la surface où le corps tient. {@code
+	 * POSITIVE_INFINITY} si aucune place. Calcul par formes de collision (demi-dalle = 0,5, bloc = 1, bloc + dalle = 1,5...).
 	 */
 	public static double riseAhead(Level level, Vec3 feet, double dx, double dz) {
 		double len = Math.sqrt(dx * dx + dz * dz);
@@ -72,30 +162,8 @@ public final class Walkability {
 		}
 		double ax = feet.x + dx / len * 0.7;
 		double az = feet.z + dz / len * 0.7;
-		int cx = (int) Math.floor(ax);
-		int cz = (int) Math.floor(az);
-		int baseY = (int) Math.floor(feet.y + 0.001);
-
-		List<Double> heights = new ArrayList<>();
-		heights.add(feet.y);
-		for (int y = baseY - 1; y <= baseY + 2; y++) {
-			BlockPos p = new BlockPos(cx, y, cz);
-			VoxelShape shape = level.getBlockState(p).getCollisionShape(level, p);
-			if (!shape.isEmpty()) {
-				double top = y + shape.max(Direction.Axis.Y);
-				if (top > feet.y && top <= feet.y + 1.6) {
-					heights.add(top);
-				}
-			}
-		}
-		Collections.sort(heights);
-		for (double h : heights) {
-			AABB body = new AABB(ax - HALF_WIDTH, h + 0.002, az - HALF_WIDTH, ax + HALF_WIDTH, h + HEIGHT, az + HALF_WIDTH);
-			if (level.noCollision(body)) {
-				return h - feet.y;
-			}
-		}
-		return Double.POSITIVE_INFINITY;
+		double h = feetHeightAt(level, ax, az, feet.y, JUMP_HEIGHT, 0.0, 0.0);
+		return Double.isNaN(h) ? Double.POSITIVE_INFINITY : Math.max(0, h - feet.y);
 	}
 
 	/**
@@ -113,58 +181,62 @@ public final class Walkability {
 		return isInWorld(level, feet) && isSafeFluidAndBlock(level, feet) && isSafeFluidAndBlock(level, feet.above());
 	}
 
-	/** Comme {@link #segmentWalkable} mais renvoie la case du premier point bloqué (null si le tronçon est praticable). */
-	public static BlockPos segmentBlockedAt(Level level, Vec3 from, Vec3 to, double margin) {
+	/** Un sol (non dangereux) est-il sous l'empreinte du joueur en (x, z) à la hauteur de pieds y (à 0,06 près) ? */
+	public static boolean supportedAt(Level level, double x, double y, double z) {
+		return !surfaceTops(level, x, z, y - 0.06, y + 0.06).isEmpty();
+	}
+
+	/**
+	 * Balayage de la boîte du joueur de {@code from} à {@code to} tous les 0,25 bloc. La hauteur des pieds suit le vrai sol
+	 * à chaque échantillon (marche d'une demi-dalle, montée, descente) : on n'impose plus de hauteur « plate ». Retourne la
+	 * case du premier point bloqué, ou null si le tronçon est praticable.
+	 * @param up   montée maximale acceptée entre deux échantillons
+	 * @param down descente maximale acceptée
+	 * @param needSupport sol exigé sous chaque échantillon (sinon un vide est toléré : tronçon de chute)
+	 */
+	public static BlockPos sweepBlockedAt(Level level, Vec3 from, Vec3 to, double margin, double up, double down, boolean needSupport) {
 		double dx = to.x - from.x;
 		double dz = to.z - from.z;
 		double length = Math.sqrt(dx * dx + dz * dz);
 		int samples = Math.max(1, (int) Math.ceil(length / 0.25));
-		boolean stepped = Math.abs(to.y - from.y) > 0.6;
-		boolean slight = !stepped && Math.abs(to.y - from.y) > 0.05;
+		double y = from.y;
 		for (int i = 1; i <= samples; i++) {
 			double t = (double) i / samples;
 			double x = from.x + dx * t;
 			double z = from.z + dz * t;
-			double y = (stepped || slight) ? (t < 0.5 ? from.y : to.y) : from.y;
-			if (!bodyFreeAt(level, x, y, z, margin)) {
-				return BlockPos.containing(x, y + 0.05, z);
+			double ny = feetHeightAt(level, x, z, y, up, down, margin);
+			if (Double.isNaN(ny)) {
+				if (needSupport || !bodyFreeAt(level, x, y, z, margin)) {
+					return BlockPos.containing(x, y + 0.05, z);
+				}
+				continue; // chute : le corps passe à la hauteur courante
 			}
+			if (ny < y - 0.05 && !bodyFreeAt(level, x, y, z, margin)) {
+				return BlockPos.containing(x, y + 0.05, z); // descente : le corps doit passer à l'ancienne hauteur aussi
+			}
+			y = ny;
 		}
 		return null;
 	}
 
-	/** Un sol (non dangereux) est-il présent sous le point (x, z) quand les pieds sont à la hauteur y ? */
-	public static boolean supportedAt(Level level, double x, double y, double z) {
-		BlockPos below = BlockPos.containing(x, y - 0.05, z);
-		BlockState floor = level.getBlockState(below);
-		return !floor.getCollisionShape(level, below).isEmpty() && !isHazard(floor);
+	private static double dropReach() {
+		return com.valafre.automod.config.ModConfig.get().maxDropBlocks + 0.5;
+	}
+
+	/** Premier point bloqué d'un tronçon de déplacement (montées et chutes tolérées), ou null. */
+	public static BlockPos segmentBlockedAt(Level level, Vec3 from, Vec3 to, double margin) {
+		return sweepBlockedAt(level, from, to, margin, JUMP_HEIGHT, dropReach(), false);
 	}
 
 	/**
-	 * Le déplacement de {@code from} à {@code to} est-il réellement praticable (balayage de la boîte du joueur tous les
-	 * 0,25 bloc) ? Une différence de hauteur de plus de 0,6 est traitée en deux phases (plat à la hauteur de départ, puis à
-	 * celle d'arrivée à mi-chemin) ; le sol n'est exigé que sur les tronçons de même hauteur.
+	 * Le déplacement de {@code from} à {@code to} est-il réellement praticable ? Avec {@code needSupport} : à pied (montée
+	 * d'au plus 0,6, descente d'au plus 0,6, sol sous chaque point) ; sinon montées de saut et chutes tolérées.
 	 */
 	public static boolean segmentWalkable(Level level, Vec3 from, Vec3 to, double margin, boolean needSupport) {
-		double dx = to.x - from.x;
-		double dz = to.z - from.z;
-		double length = Math.sqrt(dx * dx + dz * dz);
-		int samples = Math.max(1, (int) Math.ceil(length / 0.25));
-		boolean stepped = Math.abs(to.y - from.y) > 0.6;
-		boolean slight = !stepped && Math.abs(to.y - from.y) > 0.05;
-		for (int i = 1; i <= samples; i++) {
-			double t = (double) i / samples;
-			double x = from.x + dx * t;
-			double z = from.z + dz * t;
-			double y = (stepped || slight) ? (t < 0.5 ? from.y : to.y) : from.y;
-			if (!bodyFreeAt(level, x, y, z, margin)) {
-				return false;
-			}
-			if (needSupport && !stepped && !supportedAt(level, x, y, z)) {
-				return false;
-			}
+		if (needSupport) {
+			return sweepBlockedAt(level, from, to, margin, STEP_HEIGHT, STEP_HEIGHT, true) == null;
 		}
-		return true;
+		return sweepBlockedAt(level, from, to, margin, JUMP_HEIGHT, dropReach(), false) == null;
 	}
 
 	/** Rien ne bloque le rayon {@code from} -> {@code to} (blocs pleins) ? Sert à savoir si une position permet de voir/frapper la cible. */

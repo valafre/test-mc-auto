@@ -19,6 +19,9 @@ import net.minecraft.world.phys.Vec3;
  */
 public final class CombatPositioner {
 
+	/** Dernière hauteur de pieds choisie par un positionneur (diagnostic uniquement). */
+	public static volatile double debugLastStandY = Double.NaN;
+
 	private static final int ANGLE_STEPS = 12;
 	private static final int REEVAL_TICKS = 10;
 	private static final double TARGET_MOVED_SQ = 2.0 * 2.0;
@@ -130,25 +133,24 @@ public final class CombatPositioner {
 		}
 		chosenCell = bestCell;
 		chosen = bestPos;
+		debugLastStandY = bestPos == null ? Double.NaN : bestPos.y; // diagnostic [NAV HEIGHT]
 	}
 
-	/** Case praticable à (x, z) proche de la hauteur {@code y} de la cible (0, -1 puis +1), ou null. */
+	/** Case praticable à (x, z) proche de la hauteur réelle {@code y} (pieds de la cible), ou null. Même source de hauteur que le reste. */
 	private static BlockPos standableCell(Level level, double x, double y, double z) {
-		int by = (int) Math.floor(y + 0.01);
-		for (int dy : new int[] {0, -1, 1}) {
-			BlockPos cell = new BlockPos((int) Math.floor(x), by + dy, (int) Math.floor(z));
-			if (Walkability.canStandAt(level, cell)) {
-				return cell;
-			}
+		double h = Walkability.feetHeightAt(level, x, z, y, Walkability.JUMP_HEIGHT, Walkability.JUMP_HEIGHT, 0.0);
+		if (Double.isNaN(h)) {
+			return null;
 		}
-		return null;
+		BlockPos cell = Walkability.cellOf(new Vec3(Math.floor(x) + 0.5, h, Math.floor(z) + 0.5));
+		return Walkability.canStandAt(level, cell) ? cell : null;
 	}
 
 	private static int solidSides(Level level, BlockPos pos) {
+		double h = Walkability.standHeight(level, pos);
 		int n = 0;
 		for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.Plane.HORIZONTAL) {
-			BlockPos side = pos.relative(dir);
-			if (!level.getBlockState(side).getCollisionShape(level, side).isEmpty()) {
+			if (!Walkability.bodyFreeAt(level, pos.getX() + 0.5 + dir.getStepX(), h, pos.getZ() + 0.5 + dir.getStepZ(), 0.0)) {
 				n++;
 			}
 		}

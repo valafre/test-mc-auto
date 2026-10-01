@@ -6,6 +6,7 @@ import com.valafre.automod.core.PlayerState;
 import com.valafre.automod.input.InputController;
 import com.valafre.automod.input.InputController.Key;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.List;
@@ -170,7 +171,7 @@ public final class MovementController {
 			BlockPos last = path.get(path.size() - 1);
 			double ex = last.getX() + 0.5 - pos.x;
 			double ez = last.getZ() + 0.5 - pos.z;
-			if (ex * ex + ez * ez < PATH_END_RADIUS * PATH_END_RADIUS && Math.abs(last.getY() - pos.y) < 1.2) {
+			if (ex * ex + ez * ez < PATH_END_RADIUS * PATH_END_RADIUS && Math.abs(nodePoint(state.level(), last).y - pos.y) < 1.2) {
 				resetMotion();
 				lastStatus = "FIN DE CHEMIN (destination inaccessible)";
 				return MoveStatus.ARRIVED;
@@ -206,7 +207,7 @@ public final class MovementController {
 			}
 		} else if (!waypointValid) {
 			refusal = "WAYPOINT_INVALID";
-			BlockPos cell = state.player().blockPosition();
+			BlockPos cell = Walkability.cellOf(pos);
 			Vec3 centre = new Vec3(cell.getX() + 0.5, pos.y, cell.getZ() + 0.5);
 			double cx = centre.x - pos.x;
 			double cz = centre.z - pos.z;
@@ -246,7 +247,7 @@ public final class MovementController {
 		}
 		if (controlLook) {
 			// Regard à hauteur des yeux pour garder un pitch neutre pendant la marche.
-			Vec3 lookTarget = lookAheadPoint(pos, waypoint);
+			Vec3 lookTarget = lookAheadPoint(state.level(), pos, waypoint);
 			if (lookTarget != null) {
 				rotation.lookAt(new Vec3(lookTarget.x, state.eyePosition().y, lookTarget.z), null, "PATH");
 			}
@@ -355,7 +356,7 @@ public final class MovementController {
 	 * loin (prochains nœuds), comme un joueur qui anticipe. Sans rien plus loin, la caméra ne bouge pas : viser un point
 	 * à 0,3 bloc faisait tourner l'écran à chaque pas.
 	 */
-	private Vec3 lookAheadPoint(Vec3 pos, Vec3 waypoint) {
+	private Vec3 lookAheadPoint(Level level, Vec3 pos, Vec3 waypoint) {
 		double dx = waypoint.x - pos.x;
 		double dz = waypoint.z - pos.z;
 		if (dx * dx + dz * dz >= LOOK_NEAR * LOOK_NEAR) {
@@ -366,7 +367,7 @@ public final class MovementController {
 			double nx = n.getX() + 0.5 - pos.x;
 			double nz = n.getZ() + 0.5 - pos.z;
 			if (nx * nx + nz * nz >= LOOK_NEAR * LOOK_NEAR) {
-				return new Vec3(n.getX() + 0.5, n.getY(), n.getZ() + 0.5);
+				return nodePoint(level, n);
 			}
 		}
 		// Rien de plus loin : on vise quand même le point s'il est assez loin pour que la direction soit stable.
@@ -382,7 +383,7 @@ public final class MovementController {
 		Vec3 prev = state.position();
 		for (int i = pathIndex; i < Math.min(path.size(), pathIndex + VALIDATE_NODES); i++) {
 			BlockPos n = path.get(i);
-			Vec3 c = new Vec3(n.getX() + 0.5, Walkability.standHeight(state.level(), n), n.getZ() + 0.5);
+			Vec3 c = nodePoint(state.level(), n);
 			if (!Walkability.segmentWalkable(state.level(), prev, c, 0.0, false)) {
 				paths.avoid(n);
 				ticksSincePath = Integer.MAX_VALUE / 2;
@@ -486,8 +487,8 @@ public final class MovementController {
 		double rz = -Math.sin(yawRad);
 		Vec3 pos = state.position();
 		for (int dir : new int[] {maneuverSide, -maneuverSide}) {
-			BlockPos probe = BlockPos.containing(pos.x + rx * dir * 0.9, pos.y + 0.05, pos.z + rz * dir * 0.9);
-			if (Walkability.canStandAt(state.level(), probe) || Walkability.canStandAt(state.level(), probe.below())) {
+			if (!Double.isNaN(Walkability.feetHeightAt(state.level(), pos.x + rx * dir * 0.9, pos.z + rz * dir * 0.9, pos.y,
+				Walkability.JUMP_HEIGHT, 1.1, 0.0))) {
 				return dir;
 			}
 		}
@@ -660,7 +661,7 @@ public final class MovementController {
 		boolean needsPath = goalMoved || ++ticksSincePath >= interval || forced;
 		if (needsPath) {
 			PathController.PathResult result =
-				paths.findPathBestEffort(state.level(), state.player().blockPosition(), goal, budget);
+				paths.findPathBestEffort(state.level(), Walkability.cellOf(pos), goal, budget);
 			// Engagement dans un chemin : un recalcul périodique ne remplace pas le chemin en cours par un autre de longueur
 			// comparable (deux routes presque équivalentes autour d'un obstacle faisaient faire demi-tour au joueur et
 			// tourner la caméra de ~100° à chaque recalcul). On change seulement si c'est nettement plus court ou imposé.
@@ -682,7 +683,7 @@ public final class MovementController {
 		if (path.isEmpty()) {
 			return null;
 		}
-		while (pathIndex < path.size() - 1 && reached(pos, path.get(pathIndex), WAYPOINT_REACHED + 0.6 * turnFactor(pos))) {
+		while (pathIndex < path.size() - 1 && reached(state.level(), pos, path.get(pathIndex), WAYPOINT_REACHED + 0.6 * turnFactor(pos))) {
 			pathIndex++;
 		}
 		// Lissage : on saute directement au nœud le plus lointain (8 max) atteignable en ligne droite dégagée.
@@ -690,14 +691,14 @@ public final class MovementController {
 			ticksSinceLookahead = 0;
 			for (int j = Math.min(path.size() - 1, pathIndex + 8); j > pathIndex; j--) {
 				BlockPos n = path.get(j);
-				if (paths.isClearLine(state.level(), pos, new Vec3(n.getX() + 0.5, n.getY(), n.getZ() + 0.5))) {
+				if (paths.isClearLine(state.level(), pos, nodePoint(state.level(), n))) {
 					pathIndex = j;
 					break;
 				}
 			}
 		}
 		BlockPos node = path.get(pathIndex);
-		return new Vec3(node.getX() + 0.5, node.getY(), node.getZ() + 0.5);
+		return nodePoint(state.level(), node);
 	}
 
 	/**
@@ -716,10 +717,16 @@ public final class MovementController {
 		return Math.min(1.0, diff / (Math.PI / 2));
 	}
 
-	private static boolean reached(Vec3 pos, BlockPos node, double radius) {
-		double dx = node.getX() + 0.5 - pos.x;
-		double dz = node.getZ() + 0.5 - pos.z;
-		return dx * dx + dz * dz < radius * radius && Math.abs(node.getY() - pos.y) < 1.2;
+	private static boolean reached(Level level, Vec3 pos, BlockPos node, double radius) {
+		Vec3 p = nodePoint(level, node);
+		double dx = p.x - pos.x;
+		double dz = p.z - pos.z;
+		return dx * dx + dz * dz < radius * radius && Math.abs(p.y - pos.y) < 1.2;
+	}
+
+	/** Point réel d'un nœud du chemin : centre de la case, à la HAUTEUR RÉELLE des pieds (jamais le numéro de case). */
+	static Vec3 nodePoint(Level level, BlockPos node) {
+		return new Vec3(node.getX() + 0.5, Walkability.standHeight(level, node), node.getZ() + 0.5);
 	}
 
 	// ========================================

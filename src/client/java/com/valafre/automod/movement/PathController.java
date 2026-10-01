@@ -142,54 +142,45 @@ public final class PathController {
 						PriorityQueue<Node> open, Map<Long, Node> nodes) {
 		BlockPos base = current.pos;
 		boolean diagonal = dx != 0 && dz != 0;
-		// Interdit de "couper" un coin : les deux cases orthogonales doivent être libres.
-		if (diagonal && (!Walkability.isBodyFree(level, base.offset(dx, 0, 0))
-			|| !Walkability.isBodyFree(level, base.offset(0, 0, dz)))) {
+		// Hauteur RÉELLE des pieds sur la case courante (pas son numéro de case).
+		double h = Walkability.standHeight(level, base);
+		double bx = base.getX() + 0.5;
+		double bz = base.getZ() + 0.5;
+		// Interdit de "couper" un coin : les deux colonnes orthogonales doivent laisser passer le corps à cette hauteur.
+		if (diagonal && (!passable(level, bx + dx, h, bz) || !passable(level, bx, h, bz + dz))) {
 			return;
 		}
-		BlockPos side = base.offset(dx, 0, dz);
+		double sx = bx + dx;
+		double sz = bz + dz;
 		double cost = diagonal ? 1.414 : 1.0;
-		BlockPos next = null;
-
-		if (Walkability.canStandAt(level, side)) {
-			// Hauteur réelle des surfaces (demi-dalles...) : un "bloc de plus" peut valoir 0,5 ou 1,5.
-			double rise = Walkability.standHeight(level, side) - Walkability.standHeight(level, base);
-			if (rise <= MAX_RISE) {
-				next = side;
-				if (rise > WALK_RISE) {
-					cost += 0.5; // il faudra sauter
-				}
-			}
-		} else if (Walkability.isBodyFree(level, side)) {
-			// Vide devant : descente (chute jusqu'à MAX_DROP blocs).
-			for (int k = 1; k <= com.valafre.automod.config.ModConfig.get().maxDropBlocks; k++) {
-				BlockPos lower = side.below(k);
-				if (Walkability.canStandAt(level, lower)) {
-					next = lower;
-					cost += 0.5 * k;
-					break;
-				}
-				if (!Walkability.isBodyFree(level, lower)) {
-					break;
-				}
-			}
-		} else {
-			// Obstacle devant : montée d'un bloc si la tête a la place de sauter.
-			BlockPos up = side.above();
-			if (Walkability.canStandAt(level, up) && Walkability.isBodyFree(level, base.above())
-				&& Walkability.standHeight(level, up) - Walkability.standHeight(level, base) <= MAX_RISE) {
-				next = up;
-				cost += 0.5;
-			}
-		}
-		if (next == null) {
+		int maxDrop = com.valafre.automod.config.ModConfig.get().maxDropBlocks;
+		// Surface praticable de la colonne voisine, la plus proche de la hauteur actuelle (marche, demi-dalle, saut, chute).
+		double top = Walkability.feetHeightAt(level, sx, sz, h, MAX_RISE, maxDrop + 0.5, 0.0);
+		if (Double.isNaN(top)) {
 			return;
 		}
-		// Le trajet réel entre les deux cases doit être praticable (coins, plafonds de marche...). Un déplacement
+		double rise = top - h;
+		if (rise > WALK_RISE) {
+			// Il faudra sauter : la tête doit avoir la place de monter au-dessus de la case de départ.
+			if (!Walkability.bodyFreeAt(level, bx, h + Math.min(rise, 1.0), bz, 0.0)) {
+				return;
+			}
+			cost += 0.5;
+		} else if (rise < -WALK_RISE) {
+			// Chute : le corps doit pouvoir descendre tout le long de la colonne voisine.
+			for (double y = h; y > top; y -= 1.0) {
+				if (!Walkability.bodyFreeAt(level, sx, y, sz, 0.0)) {
+					return;
+				}
+			}
+			cost += 0.5 * Math.ceil(-rise);
+		}
+		BlockPos next = Walkability.cellOf(new Vec3(sx, top, sz));
+		// Le trajet réel entre les deux points doit être praticable (coins, plafonds de marche...). Un déplacement
 		// orthogonal à plat est sûr par construction ; on ne balaie que diagonales, montées et descentes.
-		if (diagonal || next.getY() != base.getY()) {
-			Vec3 a = new Vec3(base.getX() + 0.5, Walkability.standHeight(level, base), base.getZ() + 0.5);
-			Vec3 b = new Vec3(next.getX() + 0.5, Walkability.standHeight(level, next), next.getZ() + 0.5);
+		if (diagonal || Math.abs(rise) > 0.05) {
+			Vec3 a = new Vec3(bx, h, bz);
+			Vec3 b = new Vec3(sx, top, sz);
 			if (!Walkability.segmentWalkable(level, a, b, 0.02, false)) {
 				com.valafre.automod.debug.StepTrace.astarReject(level, base, next, a, b); // diagnostic (debug uniquement)
 				return;
@@ -212,6 +203,12 @@ public final class PathController {
 		open.add(node);
 	}
 
+	/** Le corps passe-t-il dans la colonne (x, z) à la hauteur h, ou y a-t-il une marche praticable à cet endroit ? */
+	private static boolean passable(Level level, double x, double h, double z) {
+		return Walkability.bodyFreeAt(level, x, h, z, 0.0)
+			|| !Double.isNaN(Walkability.feetHeightAt(level, x, z, h, WALK_RISE, WALK_RISE, 0.0));
+	}
+
 	/**
 	 * Possibilités de sortie : une case dont il ne reste qu'une issue (cul-de-sac, renfoncement, bout de couloir) est un
 	 * piège potentiel ; on l'évite fortement sauf si c'est le but. Test rapide : voisin orthogonal libre sur 2 blocs de
@@ -223,37 +220,36 @@ public final class PathController {
 	}
 
 	private static double deadEndPenalty(Level level, BlockPos pos) {
+		double h = Walkability.standHeight(level, pos);
 		int exits = 0;
 		for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.Plane.HORIZONTAL) {
-			BlockPos side = pos.relative(dir);
-			if (!solid(level, side) && !solid(level, side.above()) && solid(level, side.below())) {
+			double x = pos.getX() + 0.5 + dir.getStepX();
+			double z = pos.getZ() + 0.5 + dir.getStepZ();
+			// Sortie : on peut avancer à plat, monter (marche / saut) ou descendre dans cette direction.
+			if (Walkability.bodyFreeAt(level, x, h, z, 0.0)
+				|| !Double.isNaN(Walkability.feetHeightAt(level, x, z, h, MAX_RISE, WALK_RISE, 0.0))) {
 				exits++;
-			} else if (!solid(level, side) && !solid(level, side.above()) && !solid(level, side.below())) {
-				exits++; // descente possible (marche vers le vide) : une sortie, même si on évite de la prendre
-			} else if (!solid(level, side.above()) && !solid(level, pos.above()) && solid(level, side)) {
-				exits++; // marche d'un bloc à gravir
 			}
 		}
 		return exits <= 1 ? 4.0 : 0.0;
 	}
 
-	private static boolean solid(Level level, BlockPos p) {
-		return !level.getBlockState(p).getCollisionShape(level, p).isEmpty();
-	}
-
 	/**
 	 * Marge de sécurité : surcoût pour les cases collées à un mur, dans un angle ou au bord du vide. Les chemins restent
 	 * ainsi à distance des obstacles quand il y a de la place, et un couloir étroit n'est pris que faute de mieux.
+	 * « Mur » = colonne où le corps ne passe pas à la hauteur réelle des pieds (une demi-dalle n'est pas un mur).
 	 */
 	private static double clearancePenalty(Level level, BlockPos pos) {
+		double h = Walkability.standHeight(level, pos);
 		double penalty = 0;
 		int solidSides = 0;
 		for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.Plane.HORIZONTAL) {
-			BlockPos side = pos.relative(dir);
-			if (!level.getBlockState(side).getCollisionShape(level, side).isEmpty()) {
+			double x = pos.getX() + 0.5 + dir.getStepX();
+			double z = pos.getZ() + 0.5 + dir.getStepZ();
+			if (!Walkability.bodyFreeAt(level, x, h, z, 0.0)) {
 				penalty += 0.5;
 				solidSides++;
-			} else if (level.getBlockState(side.below()).getCollisionShape(level, side.below()).isEmpty()) {
+			} else if (Double.isNaN(Walkability.feetHeightAt(level, x, z, h, WALK_RISE, WALK_RISE, 0.0))) {
 				penalty += 0.4; // bord du vide : on évite de longer un précipice
 			}
 		}
@@ -261,8 +257,7 @@ public final class PathController {
 			penalty += 0.5; // angle ou couloir : on s'y coince plus facilement
 		}
 		for (int[] d : new int[][] {{1, 1}, {1, -1}, {-1, 1}, {-1, -1}}) {
-			BlockPos corner = pos.offset(d[0], 0, d[1]);
-			if (!level.getBlockState(corner).getCollisionShape(level, corner).isEmpty()) {
+			if (!Walkability.bodyFreeAt(level, pos.getX() + 0.5 + d[0], h, pos.getZ() + 0.5 + d[1], 0.0)) {
 				penalty += 0.2;
 			}
 		}
