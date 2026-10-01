@@ -50,6 +50,16 @@ public final class RotationController {
 	private float pendingPitch;
 	private float applied = 1.0f;
 
+	// Micro-mouvements : suite de sinusoïdes lentes aux phases propres à la session (organique, sans à-coups).
+	private static final java.util.Random PHASES = new java.util.Random();
+	private final float phaseYawA = PHASES.nextFloat() * 6.2832f;
+	private final float phaseYawB = PHASES.nextFloat() * 6.2832f;
+	private final float phasePitchA = PHASES.nextFloat() * 6.2832f;
+	private final float phasePitchB = PHASES.nextFloat() * 6.2832f;
+	private long tremorTick;
+	private float lastTremorYaw;
+	private float lastTremorPitch;
+
 	public RotationController(CameraRecorder recorder) {
 		this.recorder = recorder;
 	}
@@ -143,14 +153,29 @@ public final class RotationController {
 			double settle = cfg.camMinSettleTicks + cfg.camSettleSlope * log2(1.0 + angular / sizeYaw);
 			float omega = (float) (4.0 / settle);
 			float follow = locked ? cfg.camLockedFollow : 1.0f; // part du mouvement de la cible reproduite
+			// Micro-mouvements : on ajoute leur variation par tick à la vitesse "suivie" (visible même dans la zone de tolérance).
+			float tremorYaw = 0;
+			float tremorPitch = 0;
+			if (cfg.camTremor) {
+				tremorTick++;
+				float curYaw = cfg.camTremorDeg * (float) (Math.sin(0.41 * tremorTick + phaseYawA) + 0.6 * Math.sin(0.72 * tremorTick + phaseYawB));
+				float curPitch = 0.7f * cfg.camTremorDeg * (float) (Math.sin(0.37 * tremorTick + phasePitchA) + 0.6 * Math.sin(0.83 * tremorTick + phasePitchB));
+				tremorYaw = curYaw - lastTremorYaw;
+				tremorPitch = curPitch - lastTremorPitch;
+				lastTremorYaw = curYaw;
+				lastTremorPitch = curPitch;
+			}
+			float ffYaw = follow * targetVYaw + tremorYaw;
+			float ffPitch = follow * targetVPitch + tremorPitch;
+			float zeta = cfg.camDamping;
 			float exYaw = locked ? 0.0f : errYaw;
 			float exPitch = locked ? 0.0f : errPitch;
 
 			float moveYaw = 0;
 			float movePitch = 0;
 			for (int i = 0; i < 2; i++) { // 2 sous-pas : intégration stable
-				float dvYaw = (omega * omega * exYaw - 2 * omega * (vYaw - follow * targetVYaw)) * 0.5f;
-				float dvPitch = (omega * omega * exPitch - 2 * omega * (vPitch - follow * targetVPitch)) * 0.5f;
+				float dvYaw = (omega * omega * exYaw - 2 * zeta * omega * (vYaw - ffYaw)) * 0.5f;
+				float dvPitch = (omega * omega * exPitch - 2 * zeta * omega * (vPitch - ffPitch)) * 0.5f;
 				// Accélération plafonnée (sur la norme, donc les deux axes restent cohérents) : pas de démarrage brutal.
 				float dv = (float) Math.hypot(dvYaw, dvPitch);
 				float maxDv = cfg.camMaxAccelDeg * 0.5f;
@@ -169,12 +194,12 @@ public final class RotationController {
 				moveYaw += vYaw * 0.5f;
 				movePitch += vPitch * 0.5f;
 			}
-			// Jamais au-delà de la cible quand on s'en approche.
-			if (!locked && Math.signum(moveYaw) == Math.signum(errYaw) && Math.abs(moveYaw) > Math.abs(errYaw)) {
+			// Amortissement >= 1 : jamais au-delà de la cible. En dessous, le léger dépassement est voulu.
+			if (zeta >= 1.0f && !locked && Math.signum(moveYaw) == Math.signum(errYaw) && Math.abs(moveYaw) > Math.abs(errYaw)) {
 				moveYaw = errYaw;
 				vYaw = errYaw;
 			}
-			if (!locked && Math.signum(movePitch) == Math.signum(errPitch) && Math.abs(movePitch) > Math.abs(errPitch)) {
+			if (zeta >= 1.0f && !locked && Math.signum(movePitch) == Math.signum(errPitch) && Math.abs(movePitch) > Math.abs(errPitch)) {
 				movePitch = errPitch;
 				vPitch = errPitch;
 			}

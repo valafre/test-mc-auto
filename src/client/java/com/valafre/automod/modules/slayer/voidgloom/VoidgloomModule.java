@@ -154,6 +154,7 @@ public final class VoidgloomModule extends AbstractModule {
 	}
 
 	private void stopActions(Framework f) {
+		f.hints().setGlance(null);
 		attackTask = null;
 		f.tasks().cancelOwner(f, ID);
 		f.movement().reset();
@@ -244,6 +245,23 @@ public final class VoidgloomModule extends AbstractModule {
 		return mobs.stream().filter(m -> !skipped.containsKey(m.getId())).toList();
 	}
 
+	/** Cible presque morte : on désigne la prochaine, vers laquelle la caméra peut commencer à dériver (point 2 : coup d'oeil). */
+	private void updateGlance(Framework f, VoidgloomTarget.Result result, ModConfig cfg) {
+		f.hints().setGlance(null);
+		if (!cfg.glance || targetIsBoss || target == null) {
+			return;
+		}
+		PlayerState ps = f.player();
+		var info = f.entityInfo().resolve(ps.level(), target);
+		boolean almostDead = info.hasHealth() && info.maxHealth() > 0 && info.health() / info.maxHealth() < cfg.glanceHealthFraction;
+		if (!almostDead) {
+			return;
+		}
+		EnderMan current = target;
+		f.hints().setGlance(f.targetSelector().selectBy(
+			reachable(result.mobs()).stream().filter(m -> m != current).toList(), m -> approachCost(f, ps, m)));
+	}
+
 	/** Toutes les ~1 s : un Enderman nettement plus proche que celui qu'on poursuit ? Alors on change (sauf si on le frappe déjà). */
 	private boolean retargetNearest(Framework f, VoidgloomTarget.Result result, ModConfig cfg) {
 		retargetAccum += cfg.targetSearchIntervalTicks;
@@ -297,6 +315,7 @@ public final class VoidgloomModule extends AbstractModule {
 		EnderMan boss = f.targetSelector().select(result.bosses(), f.player().position(), null,
 			Math.max(cfg.targetSearchRange, cfg.farmSearchRange));
 		if (boss == null) {
+			updateGlance(f, result, cfg);
 			return retargetNearest(f, result, cfg);
 		}
 		Debug.log("Voidgloom", () -> "Le boss est apparu, changement de cible");

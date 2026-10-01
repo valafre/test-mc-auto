@@ -55,7 +55,7 @@ public final class AttackTargetTask extends Task {
 		boolean sight = f.combat().hasStableLineOfSight(f.player(), target);
 
 		// Regard : l'ennemi si on le voit (ou si on garde la position), sinon le mouvement oriente vers le chemin.
-		Vec3 aim = f.humanizer().aim(target, f.player());
+		Vec3 aim = f.hints().applyGlance(f.humanizer().aim(target, f.player()), target);
 		if (sight || holdPosition) {
 			f.rotation().lookAt(aim, target.getBoundingBox(), "ENEMY");
 		}

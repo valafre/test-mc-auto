@@ -124,6 +124,18 @@ public final class ModConfig {
 	public float camPeakSpeedDeg = 18.0f;
 	/** Variation maximale de la vitesse de la caméra par tick (degrés/tick²) : démarrage et arrêt progressifs, jamais brusques. */
 	public float camMaxAccelDeg = 6.5f;
+	/** Amortissement du ressort de caméra : 1 = aucun dépassement (robotique) ; 0.7 = léger dépassement puis retour, comme une vraie main. */
+	public float camDamping = 0.7f;
+	/** Micro-mouvements lents de la caméra (suite de sinusoïdes déphasées, pas de bruit aléatoire saccadé). Amplitude en degrés. */
+	public boolean camTremor = true;
+	public float camTremorDeg = 0.08f;
+	/** Quand la cible actuelle est presque morte, la caméra dérive légèrement vers la suivante (sans quitter la hitbox actuelle). */
+	public boolean glance = true;
+	public float glanceHealthFraction = 0.25f;
+	/** Le joueur lève le pied (plus de sprint) avant un virage serré du chemin. */
+	public boolean turnSlowdown = true;
+	/** Courtes pauses de clic de temps en temps (rythme humain), qui s'ajoutent à la cadence 10-13 CPS. */
+	public boolean attackPauses = true;
 	/** Durée minimale (ticks) d'un mouvement de caméra, même pour un tout petit angle. */
 	public float camMinSettleTicks = 2.0f;
 	/** Ticks ajoutés par doublement de (angle / taille apparente de la cible) : grand angle ou petite cible = plus long. */

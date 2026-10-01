@@ -32,6 +32,7 @@ public final class Framework {
 	private final TargetSelector targetSelector = new TargetSelector();
 	private final EntityDetector entityDetector = new EntityDetector();
 	private final EntityInfoResolver entityInfo = new EntityInfoResolver();
+	private final GazeHints hints = new GazeHints();
 	private final ItemUseController items;
 	private final SupportManager support = new SupportManager();
 	private final CombatController combat;
@@ -58,6 +59,7 @@ public final class Framework {
 	public TargetSelector targetSelector() { return targetSelector; }
 	public EntityDetector entityDetector() { return entityDetector; }
 	public EntityInfoResolver entityInfo() { return entityInfo; }
+	public GazeHints hints() { return hints; }
 	public ItemUseController items() { return items; }
 	public SupportManager support() { return support; }
 	public CombatController combat() { return combat; }

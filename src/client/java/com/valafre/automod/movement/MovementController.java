@@ -238,7 +238,7 @@ public final class MovementController {
 		if (path.isEmpty()) {
 			return null;
 		}
-		while (pathIndex < path.size() - 1 && reached(pos, path.get(pathIndex))) {
+		while (pathIndex < path.size() - 1 && reached(pos, path.get(pathIndex), WAYPOINT_REACHED + 0.6 * turnFactor(pos))) {
 			pathIndex++;
 		}
 		// Lissage : on saute directement au nœud le plus lointain (8 max) atteignable en ligne droite dégagée.
@@ -256,10 +256,26 @@ public final class MovementController {
 		return new Vec3(node.getX() + 0.5, node.getY(), node.getZ() + 0.5);
 	}
 
-	private static boolean reached(Vec3 pos, BlockPos node) {
+	/**
+	 * Importance (0..1) du virage au prochain point du chemin : 0 = tout droit, 1 = angle droit ou plus. Sert à anticiper
+	 * les virages (on commence à tourner avant le coin, trajectoire courbe) et à lever le pied avant un virage serré.
+	 */
+	private double turnFactor(Vec3 pos) {
+		if (path.isEmpty() || pathIndex + 1 >= path.size()) {
+			return 0;
+		}
+		BlockPos n = path.get(pathIndex);
+		BlockPos m = path.get(pathIndex + 1);
+		double toNode = Math.atan2(n.getZ() + 0.5 - pos.z, n.getX() + 0.5 - pos.x);
+		double nextLeg = Math.atan2(m.getZ() - n.getZ(), m.getX() - n.getX());
+		double diff = Math.abs(Math.atan2(Math.sin(toNode - nextLeg), Math.cos(toNode - nextLeg)));
+		return Math.min(1.0, diff / (Math.PI / 2));
+	}
+
+	private static boolean reached(Vec3 pos, BlockPos node, double radius) {
 		double dx = node.getX() + 0.5 - pos.x;
 		double dz = node.getZ() + 0.5 - pos.z;
-		return dx * dx + dz * dz < WAYPOINT_REACHED * WAYPOINT_REACHED && Math.abs(node.getY() - pos.y) < 1.2;
+		return dx * dx + dz * dz < radius * radius && Math.abs(node.getY() - pos.y) < 1.2;
 	}
 
 	// ========================================
@@ -303,7 +319,9 @@ public final class MovementController {
 		input.request(owner, Key.LEFT, leftOn);
 		input.request(owner, Key.RIGHT, rightOn);
 
-		boolean sprint = cfg.useSprint && forwardOn && fwd > 0.9 && distToDest > cfg.slowDistance;
+		// On lève le pied (pas de sprint) juste avant un virage serré du chemin, comme un joueur qui anticipe.
+		boolean sharpTurn = cfg.turnSlowdown && len < 2.5 && turnFactor(pos) > 0.55;
+		boolean sprint = cfg.useSprint && forwardOn && fwd > 0.9 && distToDest > cfg.slowDistance && !sharpTurn;
 		input.request(owner, Key.SPRINT, sprint);
 
 		if (jumpCooldown > 0) {

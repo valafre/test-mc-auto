@@ -23,6 +23,8 @@ public final class CombatController {
 	private final java.util.Random rng = new java.util.Random();
 	private int nextInterval = 1;   // ticks à attendre avant le prochain coup
 	private double tickDebt;        // reste fractionnaire reporté : garantit le CPS moyen visé
+	private int pauseLeft;       // ticks restants de la pause de clic en cours
+	private int nextPauseIn = 70; // ticks avant la prochaine pause
 	private long tickStamp;
 	private long losStamp = -1;
 	private Entity losTarget;
@@ -37,6 +39,18 @@ public final class CombatController {
 	/** À appeler une fois par tick pour faire avancer le cooldown. */
 	public void tick() {
 		tickStamp++;
+		ModConfig cfg = ModConfig.get();
+		if (cfg.attackPauses && cfg.humanize) {
+			// Rythme humain : de temps en temps (3 à 7 s) une courte pause de clic (0,15 à 0,3 s).
+			if (pauseLeft > 0) {
+				pauseLeft--;
+			} else if (--nextPauseIn <= 0) {
+				pauseLeft = 3 + rng.nextInt(4);
+				nextPauseIn = 60 + rng.nextInt(80);
+			}
+		} else {
+			pauseLeft = 0;
+		}
 		if (ticksSinceAttack < Integer.MAX_VALUE / 2) {
 			ticksSinceAttack++;
 		}
@@ -135,6 +149,9 @@ public final class CombatController {
 			return false;
 		}
 		if (target == null || !target.isAlive() || target.isRemoved()) {
+			return false;
+		}
+		if (pauseLeft > 0) {
 			return false;
 		}
 		if (ticksSinceAttack < nextInterval
