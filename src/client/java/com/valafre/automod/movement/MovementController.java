@@ -54,6 +54,8 @@ public final class MovementController {
 	private String lastStatus = "-";
 
 	// Déblocage rapide : fenêtre courte de progrès, escalade de manoeuvres, cases à éviter.
+	/** Au-delà de cet écart (degrés) entre le regard et le point visé, on tourne la caméra plutôt que de marcher de biais. */
+	private static final float MAX_STRAFE_YAW = 60.0f;
 	private static final double SAFE_CHECK_LENGTH = 1.6;
 	private static final int FAST_WINDOW_TICKS = 8;
 	private static final double FAST_MIN_PROGRESS = 0.2;
@@ -125,6 +127,11 @@ public final class MovementController {
 		waypoint = safeWaypoint(state, waypoint);
 		boolean maneuvering = updateUnstuck(state, owner, waypoint, horizontal);
 
+		// Jamais de marche arrière / de côté prolongée : si le point à rejoindre est trop loin de l'axe du regard, on se tourne
+		// vers lui (le joueur marche en avant) au lieu de reculer en gardant les yeux sur la cible.
+		if (!controlLook && Math.abs(RotationController.yawDelta(state.eyePosition(), waypoint, state.yaw())) > MAX_STRAFE_YAW) {
+			controlLook = true;
+		}
 		if (controlLook) {
 			// Regard à hauteur des yeux pour garder un pitch neutre pendant la marche.
 			rotation.lookAt(new Vec3(waypoint.x, state.eyePosition().y, waypoint.z), null, "PATH");
