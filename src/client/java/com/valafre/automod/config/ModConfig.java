@@ -20,7 +20,7 @@ public final class ModConfig {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger("automod");
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-	private static final int CURRENT_VERSION = 11;
+	private static final int CURRENT_VERSION = 12;
 	private static ModConfig instance = new ModConfig();
 
 	/** Sert à migrer les anciens fichiers de config dont les valeurs par défaut ont changé. */
@@ -181,11 +181,11 @@ public final class ModConfig {
 	/** Étale chaque pas de rotation sur les images du tick (caméra fluide à haut FPS au lieu de 20 sauts/s). */
 	public boolean smoothFrameRotation = true;
 	/** Caméra naturelle : vitesse angulaire maximale (degrés/tick) ; 18 = environ 360 degrés/s en crête. */
-	public float camPeakSpeedDeg = 18.0f;
+	public float camPeakSpeedDeg = 11.0f;
 	/** Variation maximale de la vitesse de la caméra par tick (degrés/tick²) : démarrage et arrêt progressifs, jamais brusques. */
-	public float camMaxAccelDeg = 6.5f;
+	public float camMaxAccelDeg = 3.0f;
 	/** Amortissement du ressort de caméra : 1 = aucun dépassement (robotique) ; 0.7 = léger dépassement puis retour, comme une vraie main. */
-	public float camDamping = 0.7f;
+	public float camDamping = 0.85f;
 	/** Micro-mouvements lents de la caméra (suite de sinusoïdes déphasées, pas de bruit aléatoire saccadé). Amplitude en degrés. */
 	public boolean camTremor = true;
 	public float camTremorDeg = 0.08f;
@@ -197,9 +197,9 @@ public final class ModConfig {
 	/** Courtes pauses de clic de temps en temps (rythme humain), qui s'ajoutent à la cadence 10-13 CPS. */
 	public boolean attackPauses = true;
 	/** Durée minimale (ticks) d'un mouvement de caméra, même pour un tout petit angle. */
-	public float camMinSettleTicks = 2.0f;
+	public float camMinSettleTicks = 3.5f;
 	/** Ticks ajoutés par doublement de (angle / taille apparente de la cible) : grand angle ou petite cible = plus long. */
-	public float camSettleSlope = 1.2f;
+	public float camSettleSlope = 2.0f;
 	/** Zone de tolérance (fraction de la taille apparente de la cible) : on y entre sous camLockIn, on en sort au-dessus de camLockOut. */
 	public float camLockIn = 0.3f;
 	public float camLockOut = 0.7f;
@@ -341,6 +341,13 @@ public final class ModConfig {
 		}
 		if (c.configVersion < 11) { // on ne colle plus la cible (la caméra balayait autour d'un mob à 0,5 bloc)
 			c.combatMinDistance = 1.9;
+		}
+		if (c.configVersion < 12) { // caméra moins violente : coups de souris plafonnés, mouvements plus longs, moins de dépassement
+			c.camPeakSpeedDeg = 11.0f;
+			c.camMaxAccelDeg = 3.0f;
+			c.camDamping = 0.85f;
+			c.camMinSettleTicks = 3.5f;
+			c.camSettleSlope = 2.0f;
 		}
 		c.configVersion = CURRENT_VERSION;
 	}

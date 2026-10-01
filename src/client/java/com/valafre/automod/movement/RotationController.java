@@ -28,6 +28,11 @@ public final class RotationController {
 	private static final float RETARGET_JUMP_DEG = 25.0f;
 	private static final float COAST_DECAY = 0.6f;
 	private static final float COAST_MIN = 0.05f;
+	private static final double EYE_SMOOTHING = 0.3;
+	/** Cible (bord de hitbox) plus proche que ça en horizontal : l'angle visé n'a plus de sens, la caméra se fige. */
+	private static final double NEAR_ENEMY_RANGE = 0.9;
+	private static final double NEAR_POINT_FREE = 0.4;
+	private static final double NEAR_POINT_RANGE = 1.0;
 
 	private record Gaze(Vec3 point, AABB box, String source) {}
 
@@ -44,6 +49,9 @@ public final class RotationController {
 	private float targetVYaw;
 	private float targetVPitch;
 	private boolean locked;
+	// Hauteur d'oeil lissée : s'accroupir / sauter ne doit pas faire sauter le tangage visé de plusieurs dizaines de degrés.
+	private boolean eyeValid;
+	private double eyeYSmooth;
 
 	// Pas du tick courant, appliqué progressivement par frameUpdate (une fois par image rendue).
 	private float pendingYaw;
@@ -115,16 +123,30 @@ public final class RotationController {
 			coast();
 			hasLast = false;
 			locked = false;
+			eyeValid = false;
 			return;
 		}
 
-		Vec3 eye = state.eyePosition();
+		Vec3 realEye = state.eyePosition();
+		eyeYSmooth = eyeValid ? eyeYSmooth + (realEye.y - eyeYSmooth) * EYE_SMOOTHING : realEye.y;
+		eyeValid = true;
+		Vec3 eye = new Vec3(realEye.x, eyeYSmooth, realEye.z);
 		float yaw = player.getYRot();
 		float pitch = player.getXRot();
 		Vec3 point = gaze.point();
 		float errYaw = yawDelta(eye, point, yaw);
 		float errPitch = pitchDelta(eye, point, pitch);
 		double dist = Math.max(0.3, eye.distanceTo(point));
+
+		// Très près de la cible (ou d'un point de chemin), l'angle jusqu'au point change de 100° pour quelques centimètres :
+		// on atténue puis on fige la caméra plutôt que de la laisser balayer d'un côté à l'autre.
+		float gain = nearGain(eye, point);
+		if (gain < 0.02f) {
+			hold(player, yaw, pitch, errYaw, errPitch, dist);
+			return;
+		}
+		errYaw *= gain;
+		errPitch *= gain;
 
 		float stepYaw;
 		float stepPitch;
@@ -213,6 +235,31 @@ public final class RotationController {
 
 		apply(player, stepYaw, stepPitch, cfg.smoothFrameRotation);
 		recorder.record(gaze.source(), yaw, pitch, errYaw, errPitch, dist, sizeYaw, locked, vYaw, vPitch, stepYaw, stepPitch);
+		gaze = null;
+	}
+
+	private float nearGain(Vec3 eye, Vec3 point) {
+		double horizontal = Math.hypot(point.x - eye.x, point.z - eye.z);
+		double t;
+		if (gaze.box() != null) {
+			t = Math.max(0, horizontal - gaze.box().getXsize() * 0.5) / NEAR_ENEMY_RANGE;
+		} else {
+			t = (horizontal - NEAR_POINT_FREE) / NEAR_POINT_RANGE;
+		}
+		t = Mth.clamp(t, 0.0, 1.0);
+		return (float) (t * t * (3 - 2 * t));
+	}
+
+	/** Cible collée : on garde l'orientation actuelle (la vitesse restante s'éteint doucement). */
+	private void hold(LocalPlayer player, float yaw, float pitch, float errYaw, float errPitch, double dist) {
+		vYaw *= COAST_DECAY;
+		vPitch *= COAST_DECAY;
+		targetVYaw = 0;
+		targetVPitch = 0;
+		hasLast = false;
+		locked = true;
+		apply(player, vYaw, vPitch, ModConfig.get().smoothFrameRotation);
+		recorder.record(gaze.source(), yaw, pitch, errYaw, errPitch, dist, 3.0f, true, vYaw, vPitch, vYaw, vPitch);
 		gaze = null;
 	}
 
