@@ -2,24 +2,33 @@ package com.valafre.automod.gui;
 
 import com.valafre.automod.config.ModConfig;
 import com.valafre.automod.core.Framework;
-import com.valafre.automod.modules.slayer.voidgloom.VoidgloomModule;
+import com.valafre.automod.gui.settings.SettingsCategory;
+import com.valafre.automod.gui.settings.SettingsPage;
+import com.valafre.automod.gui.settings.SettingsRegistry;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
-import net.minecraft.util.Mth;
 
-import java.util.function.BooleanSupplier;
-import java.util.function.DoubleConsumer;
-import java.util.function.DoubleSupplier;
+import java.util.List;
 
-/** Menu de réglage (ouvert avec INSERT) : activation des modules et paramètres principaux. Sauvegarde à la fermeture. */
+/**
+ * Menu de réglage (INSERT) : colonne de catégories à gauche, réglages de la catégorie choisie à droite.
+ * Les catégories viennent du {@link SettingsRegistry} : ajouter un module n'oblige pas à modifier cet écran.
+ * La config est sauvegardée à la fermeture.
+ */
 public final class AutoModScreen extends Screen {
 
+	private static final int SIDEBAR_W = 96;
+	private static final int GAP = 6;
 	private static final int BUTTON_H = 20;
-	private static final int ROW = 22;
+	private static final int TOP_BAR = 14;
+
+	/** Catégorie ouverte (conservée d'une ouverture à l'autre). */
+	private static int selected;
 
 	private final Framework framework;
+	private SettingsPage page;
 
 	public AutoModScreen(Framework framework) {
 		super(Component.literal("AutoMod"));
@@ -28,93 +37,54 @@ public final class AutoModScreen extends Screen {
 
 	@Override
 	protected void init() {
-		ModConfig cfg = ModConfig.get();
-		int colW = 150;
-		int gap = 6;
-		int left = (width - (2 * colW + gap)) / 2;
-		int right = left + colW + gap;
-		int top = height / 2 - 70;
+		List<SettingsCategory> categories = SettingsRegistry.all();
+		if (selected >= categories.size()) {
+			selected = 0;
+		}
+		int total = Math.min(width - 16, 380);
+		int x0 = (width - total) / 2;
+		int panelHeight = TOP_BAR + SettingsPage.MAX_ROWS * SettingsPage.ROW + GAP + BUTTON_H;
+		int y0 = Math.max(6, (height - panelHeight) / 2);
 
-		// Colonne gauche : activation et options ON/OFF
-		int y = top;
-		toggle(left, y, colW, "Voidgloom", () -> isVoidgloomOn(), () -> framework.modules().toggle(framework, VoidgloomModule.ID));
-		y += ROW;
-		toggle(left, y, colW, "Exiger Slayer", () -> cfg.requireSlayer, () -> cfg.requireSlayer = !cfg.requireSlayer);
-		y += ROW;
-		toggle(left, y, colW, "Farmer Enderman", () -> cfg.farmMobs, () -> cfg.farmMobs = !cfg.farmMobs);
-		y += ROW;
-		toggle(left, y, colW, "Humaniser", () -> cfg.humanize, () -> cfg.humanize = !cfg.humanize);
-		y += ROW;
-		toggle(left, y, colW, "Debug (HUD détaillé)", () -> cfg.debugMode, () -> cfg.debugMode = !cfg.debugMode);
-		y += ROW;
-		toggle(left, y, colW, "Seulement mon boss", () -> cfg.onlyOwnBoss, () -> cfg.onlyOwnBoss = !cfg.onlyOwnBoss);
-		y += ROW;
-		toggle(left, y, colW, "Pos. au-dessus", () -> cfg.allowAbovePosition, () -> cfg.allowAbovePosition = !cfg.allowAbovePosition);
+		// Colonne des catégories
+		for (int i = 0; i < categories.size(); i++) {
+			int index = i;
+			Button button = Button.builder(
+				Component.literal((i == selected ? "» " : "") + categories.get(i).title()),
+				b -> {
+					selected = index;
+					rebuildWidgets();
+				}).bounds(x0, y0 + TOP_BAR + i * SettingsPage.ROW, SIDEBAR_W, BUTTON_H).build();
+			button.active = i != selected;
+			addRenderableWidget(button);
+		}
 
-		// Colonne droite : sneak + valeurs numériques
-		y = top;
-		toggle(right, y, colW, "Sneak sur boss", () -> cfg.sneakOnBoss, () -> cfg.sneakOnBoss = !cfg.sneakOnBoss);
-		y += ROW;
-		stepper(right, y, colW, "Portée", () -> cfg.attackDistance, v -> cfg.attackDistance = Mth.clamp(v, 2.0, 6.0), 0.25);
-		y += ROW;
-		stepper(right, y, colW, "Approche", () -> cfg.approachDistance,
-			v -> cfg.approachDistance = Mth.clamp(v, 1.0, cfg.attackDistance - 0.1), 0.25);
-		y += ROW;
-		stepper(right, y, colW, "Recherche", () -> cfg.targetSearchRange, v -> cfg.targetSearchRange = Mth.clamp(v, 4.0, 48.0), 2.0);
-		y += ROW;
-		stepper(right, y, colW, "CPS min", () -> cfg.minCps,
-			v -> { cfg.minCps = Mth.clamp(v, 1.0, 20.0); cfg.maxCps = Math.max(cfg.maxCps, cfg.minCps); }, 1.0);
-		y += ROW;
-		stepper(right, y, colW, "CPS max", () -> cfg.maxCps,
-			v -> { cfg.maxCps = Mth.clamp(v, 1.0, 20.0); cfg.minCps = Math.min(cfg.minCps, cfg.maxCps); }, 1.0);
-		y += ROW;
-		stepper(right, y, colW, "Niveau (0=off)", () -> cfg.voidgloomRequiredLevel,
-			v -> cfg.voidgloomRequiredLevel = (int) Mth.clamp(v, 0, 500), 1.0);
+		// Réglages de la catégorie choisie
+		page = new SettingsPage(b -> addRenderableWidget(b), x0 + SIDEBAR_W + GAP, y0 + TOP_BAR, total - SIDEBAR_W - GAP);
+		if (!categories.isEmpty()) {
+			categories.get(selected).build(page, framework);
+		}
 
 		addRenderableWidget(Button.builder(Component.literal("Terminé"), b -> onClose())
-			.bounds(left, top + 7 * ROW + 6, 2 * colW + gap, BUTTON_H).build());
-	}
-
-	private boolean isVoidgloomOn() {
-		return framework.modules().isEnabled(VoidgloomModule.ID);
-	}
-
-	private void toggle(int x, int y, int w, String label, BooleanSupplier state, Runnable action) {
-		Button real = Button.builder(Component.empty(), b -> {
-			action.run();
-			b.setMessage(Component.literal(label + " : " + (state.getAsBoolean() ? "ON" : "OFF")));
-		}).bounds(x, y, w, BUTTON_H).build();
-		real.setMessage(Component.literal(label + " : " + (state.getAsBoolean() ? "ON" : "OFF")));
-		addRenderableWidget(real);
-	}
-
-	private void stepper(int x, int y, int w, String label, DoubleSupplier get, DoubleConsumer set, double step) {
-		int small = 24;
-		Button middle = Button.builder(Component.empty(), b -> { })
-			.bounds(x + small + 2, y, w - 2 * small - 4, BUTTON_H).build();
-		middle.active = false;
-		middle.setMessage(text(label, get.getAsDouble()));
-		addRenderableWidget(Button.builder(Component.literal("-"), b -> {
-			set.accept(get.getAsDouble() - step);
-			middle.setMessage(text(label, get.getAsDouble()));
-		}).bounds(x, y, small, BUTTON_H).build());
-		addRenderableWidget(middle);
-		addRenderableWidget(Button.builder(Component.literal("+"), b -> {
-			set.accept(get.getAsDouble() + step);
-			middle.setMessage(text(label, get.getAsDouble()));
-		}).bounds(x + w - small, y, small, BUTTON_H).build());
-	}
-
-	private static Component text(String label, double value) {
-		return Component.literal(label + " : " + (value == Math.floor(value) ? String.valueOf((int) value) : String.format("%.2f", value)));
+			.bounds(x0, y0 + TOP_BAR + SettingsPage.MAX_ROWS * SettingsPage.ROW + GAP, total, BUTTON_H).build());
 	}
 
 	@Override
 	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
 		super.extractRenderState(graphics, mouseX, mouseY, delta);
-		graphics.text(font, title, (width - font.width(title)) / 2, height / 2 - 100, 0xFFFFFFFF);
-		Component status = Component.literal("Voidgloom : " + framework.modules().status(VoidgloomModule.ID));
-		graphics.text(font, status, (width - font.width(status)) / 2, height / 2 - 86, 0xFFAAAAAA);
+		int total = Math.min(width - 16, 380);
+		int x0 = (width - total) / 2;
+		int panelHeight = TOP_BAR + SettingsPage.MAX_ROWS * SettingsPage.ROW + GAP + BUTTON_H;
+		int y0 = Math.max(6, (height - panelHeight) / 2);
+		graphics.text(font, "AutoMod", x0, y0 + 2, 0xFFFFFFFF);
+		if (page != null) {
+			for (SettingsPage.Label label : page.labels()) {
+				graphics.text(font, label.text(), label.x(), label.y(), label.color());
+			}
+		}
+		// Place réservée aux prochains modules : ils apparaissent ici dès qu'ils enregistrent une catégorie.
+		int below = y0 + TOP_BAR + SettingsRegistry.all().size() * SettingsPage.ROW + 2;
+		graphics.text(font, "+ prochains modules", x0 + 2, below, 0xFF666666);
 	}
 
 	@Override

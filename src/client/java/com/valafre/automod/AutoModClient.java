@@ -7,6 +7,8 @@ import com.valafre.automod.core.TickManager;
 import com.valafre.automod.gui.AutoModScreen;
 import com.valafre.automod.gui.CameraFrameHook;
 import com.valafre.automod.gui.DiagnosticsHud;
+import com.valafre.automod.gui.hud.DefaultHudSections;
+import com.valafre.automod.gui.settings.DefaultCategories;
 import com.valafre.automod.modules.slayer.voidgloom.VoidgloomModule;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -47,6 +49,8 @@ public class AutoModClient implements ClientModInitializer {
 
 		recordKey = KeyMappingHelper.registerKeyMapping(
 			new KeyMapping("key.automod.record_camera", GLFW.GLFW_KEY_PAGE_UP, category));
+		DefaultCategories.registerAll();
+		DefaultHudSections.registerAll();
 		DiagnosticsHud.register(framework);
 		CameraFrameHook.register(framework);
 		new TickManager(framework).register();

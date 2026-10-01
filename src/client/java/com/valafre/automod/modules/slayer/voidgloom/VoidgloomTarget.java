@@ -36,7 +36,7 @@ public final class VoidgloomTarget {
 		for (EntityInfo info : infos) {
 			if (!info.nameContains(cfg.voidgloomNameKeyword)) {
 				// Enderman normal ("[Lv50] Enderman") : cible de farm pour faire apparaître le boss.
-				if (cfg.farmMobs && info.nameContains(cfg.farmMobKeyword)) {
+				if (cfg.farmMobs && cfg.matchesFarmMob(info.name())) {
 					mobs.add(EnderMan.class.cast(info.entity()));
 				}
 				continue;

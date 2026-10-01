@@ -61,6 +61,7 @@ public final class VoidgloomModule extends AbstractModule {
 	private AttackTargetTask attackTask;
 	private boolean attackTaskHold;
 	private EnderMan attackTaskTarget;
+	private double engageStartRatio = -1;    // PV (0..1) de la cible au début de la fenêtre de combat ; -1 = inconnu
 	private int engagedTicks = -1;    // ticks depuis le premier contact (portée + ligne de vue) ; -1 = pas encore au contact
 	private net.minecraft.world.phys.Vec3 stuckAnchor; // position de référence pour détecter un joueur bloqué
 	private int stuckTicks;
@@ -127,6 +128,7 @@ public final class VoidgloomModule extends AbstractModule {
 		target = null;
 		noLosTicks = 0;
 		engagedTicks = -1;
+		engageStartRatio = -1;
 		acquiredTicks = 0;
 		stuckAnchor = null;
 		stuckTicks = 0;
@@ -232,6 +234,7 @@ public final class VoidgloomModule extends AbstractModule {
 			target = picked;
 			noLosTicks = 0;
 		engagedTicks = -1;
+		engageStartRatio = -1;
 		acquiredTicks = 0;
 		stuckAnchor = null;
 		stuckTicks = 0;
@@ -249,6 +252,15 @@ public final class VoidgloomModule extends AbstractModule {
 	private java.util.List<EnderMan> reachable(java.util.List<EnderMan> mobs) {
 		skipped.values().removeIf(until -> until <= clock);
 		return mobs.stream().filter(m -> !skipped.containsKey(m.getId())).toList();
+	}
+
+	/** PV de la cible en fraction (0..1) d'après son nametag ou ses PV réels ; -1 si inconnus. */
+	private double targetHealthRatio(Framework f) {
+		if (target == null) {
+			return -1;
+		}
+		var info = f.entityInfo().resolve(f.player().level(), target);
+		return info.hasHealth() && info.maxHealth() > 0 ? info.health() / info.maxHealth() : -1;
 	}
 
 	/** Cible presque morte : on désigne la prochaine, vers laquelle la caméra peut commencer à dériver (point 2 : coup d'oeil). */
@@ -294,6 +306,7 @@ public final class VoidgloomModule extends AbstractModule {
 		target = nearest;
 		noLosTicks = 0;
 		engagedTicks = -1;
+		engageStartRatio = -1;
 		acquiredTicks = 0;
 		stuckAnchor = null;
 		stuckTicks = 0;
@@ -375,6 +388,7 @@ public final class VoidgloomModule extends AbstractModule {
 			engagedTicks++;
 		} else if (TargetInfo.of(ps, target).distance() <= cfg.attackDistance && noLosTicks == 0) {
 			engagedTicks = 0;
+			engageStartRatio = targetHealthRatio(f);
 		}
 		// Joueur quasi immobile depuis 3 s (coincé dans un mur, sur un bord...) : on change de cible.
 		net.minecraft.world.phys.Vec3 here = ps.position();
@@ -394,8 +408,18 @@ public final class VoidgloomModule extends AbstractModule {
 			noProgressTicks++;
 		}
 		boolean elevated = target.getY() - ps.position().y > 2.5;
-		boolean noProgress = noProgressTicks > (elevated ? cfg.noProgressElevatedTicks : cfg.noProgressTicks);
-		boolean killTimeout = engagedTicks > cfg.mobKillTimeoutTicks;
+		boolean noProgress = noProgressTicks > (elevated && !cfg.acceptElevatedMobs ? cfg.noProgressElevatedTicks : cfg.noProgressTicks);
+		// Délai de combat écoulé : on continue seulement si les PV de la cible baissent réellement (mob solide mais en train de mourir).
+		boolean killTimeout = false;
+		if (engagedTicks > cfg.mobKillTimeoutTicks) {
+			double ratio = targetHealthRatio(f);
+			if (engageStartRatio >= 0 && ratio >= 0 && engageStartRatio - ratio >= cfg.killProgressFraction) {
+				engageStartRatio = ratio;
+				engagedTicks = 0;
+			} else {
+				killTimeout = true;
+			}
+		}
 		boolean acquireTimeout = acquiredTicks > cfg.mobAcquireTimeoutTicks;
 		if (!targetIsBoss && (killTimeout || acquireTimeout || stuck || noProgress || noLosTicks > cfg.unreachableAfterTicks)) {
 			skipped.put(target.getId(), clock + cfg.skipTargetTicks);
@@ -481,10 +505,10 @@ public final class VoidgloomModule extends AbstractModule {
 		double cost = ps.position().distanceTo(entity.position()) + 0.02 * angle;
 		// Un mob perché au-dessus ou en contrebas est souvent inaccessible : forte pénalité au-delà de 1,5 bloc de dénivelé.
 		double dy = Math.abs(entity.getY() - ps.position().y);
-		if (dy > 1.5) {
+		if (dy > 1.5 && !ModConfig.get().acceptElevatedMobs) {
 			cost += 3.0 * (dy - 1.5);
 		}
-		if (!isOnScreen(f, ps, entity)) {
+		if (ModConfig.get().preferOnScreen && !isOnScreen(f, ps, entity)) {
 			cost += OFF_SCREEN_PENALTY;
 		}
 		if (!f.combat().hasLineOfSight(ps, entity)) {

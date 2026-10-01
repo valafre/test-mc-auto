@@ -81,8 +81,50 @@ public final class ModConfig {
 	// ========================================
 	/** Tue les Enderman normaux tant qu'aucun Voidgloom n'est présent. */
 	public boolean farmMobs = true;
+	/** Noms de mobs à farmer, séparés par des virgules (le nom du nametag doit contenir l'un d'eux, sans tenir compte de la casse). */
 	public String farmMobKeyword = "enderman";
+	/** Un mob à ce nom est-il à farmer ? */
+	public boolean matchesFarmMob(String name) {
+		String lower = name.toLowerCase(java.util.Locale.ROOT);
+		for (String keyword : farmMobKeyword.split(",")) {
+			String k = keyword.trim().toLowerCase(java.util.Locale.ROOT);
+			if (!k.isEmpty() && lower.contains(k)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** Le type {@code mobName} fait-il partie de la liste (entrée exacte) ? Utilisé par les interrupteurs du menu. */
+	public boolean farmsMobType(String mobName) {
+		for (String keyword : farmMobKeyword.split(",")) {
+			if (keyword.trim().equalsIgnoreCase(mobName)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	public void setFarmMobType(String mobName, boolean on) {
+		java.util.List<String> kept = new java.util.ArrayList<>();
+		for (String keyword : farmMobKeyword.split(",")) {
+			String k = keyword.trim();
+			if (!k.isEmpty() && !k.equalsIgnoreCase(mobName)) {
+				kept.add(k);
+			}
+		}
+		if (on) {
+			kept.add(mobName);
+		}
+		farmMobKeyword = String.join(",", kept);
+	}
+	/** Un mob dont les PV n'ont pas baissé d'au moins cette fraction (4 %) pendant la durée d'abandon est abandonné ; sinon on continue. */
+	public float killProgressFraction = 0.04f;
 	public double farmSearchRange = 32.0;
+	/** Cibler aussi les mobs perchés (plus de 1,5 bloc de dénivelé) : sinon ils sont pénalisés puis abandonnés vite quand on n'arrive pas à les atteindre. */
+	public boolean acceptElevatedMobs = false;
+	/** Préférer les mobs visibles à l'écran (champ de vision) quand on choisit une cible. */
+	public boolean preferOnScreen = true;
 
 	// ========================================
 	// HUMANISATION
