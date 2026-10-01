@@ -20,7 +20,7 @@ public final class ModConfig {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger("automod");
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-	private static final int CURRENT_VERSION = 12;
+	private static final int CURRENT_VERSION = 13;
 	private static ModConfig instance = new ModConfig();
 
 	/** Sert à migrer les anciens fichiers de config dont les valeurs par défaut ont changé. */
@@ -284,8 +284,8 @@ public final class ModConfig {
 	// MÉCANIQUE AU SOL (détection par bloc, à confirmer par observation en jeu)
 	// ========================================
 	public String mechanicBlockId = "minecraft:beacon";
-	public int mechanicScanRadius = 10;
-	public int mechanicScanHalfHeight = 3;
+	public int mechanicScanRadius = 24;
+	public int mechanicScanHalfHeight = 6;
 	public int mechanicScanIntervalTicks = 5;
 
 	private ModConfig() {}
@@ -352,6 +352,10 @@ public final class ModConfig {
 			c.camDamping = 0.85f;
 			c.camMinSettleTicks = 3.5f;
 			c.camSettleSlope = 2.0f;
+		}
+		if (c.configVersion < 13) { // balise détectée de plus loin (elle était hors du rayon de scan)
+			c.mechanicScanRadius = 24;
+			c.mechanicScanHalfHeight = 6;
 		}
 		c.configVersion = CURRENT_VERSION;
 	}

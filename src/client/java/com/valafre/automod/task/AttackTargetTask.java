@@ -27,7 +27,7 @@ public final class AttackTargetTask extends Task {
 	private static final double CLOSE_BACK_DISTANCE = 1.1;
 
 	private static final int WALL_TICKS_BEFORE_DETOUR = 3;
-	private static final int KEEP_LOOK_TICKS = 12;
+	private static final int KEEP_LOOK_TICKS = 3;
 	private static final int DETOUR_TICKS = 25;
 
 	private final LivingEntity target;
@@ -65,7 +65,7 @@ public final class AttackTargetTask extends Task {
 
 		// Regard : l'ennemi si on le voit (ou si on garde la position), sinon le mouvement oriente vers le chemin.
 		Vec3 aim = f.hints().applyGlance(f.humanizer().aim(target, f.player()), target);
-		// Ligne de vue perdue depuis moins de 0,6 s : on garde les yeux sur la cible (elle reparaît souvent au coin) au lieu
+		// Ligne de vue perdue depuis moins de 0,15 s : on garde les yeux sur la cible (elle reparaît souvent au coin) au lieu
 		// de basculer vers le chemin, ce qui faisait tourner la caméra de ~100° dans un sens puis dans l'autre.
 		sightLostTicks = sight ? 0 : sightLostTicks + 1;
 		boolean recentlySaw = !sight && sightLostTicks <= KEEP_LOOK_TICKS;

@@ -456,6 +456,9 @@ public final class VoidgloomModule extends AbstractModule {
 		if (!targetIsBoss && switchToBossIfSpawned(f)) {
 			return;
 		}
+		if (reactionTicks > 0 && !f.combat().hasLineOfSight(ps, target)) {
+			reactionTicks = 0; // cible cachée derrière un bloc : on ne la fixe pas du regard, le déplacement s'en charge
+		}
 		if (reactionTicks > 0) { // transition : la caméra s'oriente vers la nouvelle cible avant l'engagement
 			reactionTicks--;
 			if (!f.tasks().isRunning(LookAtTask.class)) {
