@@ -36,6 +36,7 @@ public final class AttackTargetTask extends Task {
 	/** Ticks consécutifs collé à un obstacle sans avancer, et ticks restants de contournement par chemin. */
 	private int wallTicks;
 	private int detourTicks;
+	private boolean followDown;
 
 	/** @param sneak true : reste accroupi pendant toute la tâche (combat contre le boss)
 	 *  @param holdPosition true : le joueur garde sa position (imposée par une mécanique), vise et frappe sans bouger */
@@ -92,7 +93,10 @@ public final class AttackTargetTask extends Task {
 				chase.step(f, owner(), target, info, sight && !detour); // trop loin ou sans ligne de vue : on rejoint / contourne
 			}
 		}
-		if (sneak) {
+		// Le boss est tombé plus bas (rebord, plateforme) : on cesse de s'accroupir pour pouvoir le suivre dans le vide.
+		double below = f.player().player().getY() - target.getY();
+		followDown = below > 1.0 || (followDown && below > 0.3);
+		if (sneak && !followDown) {
 			f.input().request(owner(), Key.SNEAK, true);
 		}
 		f.items().equip(f.player(), cfg.weaponKeyword);
