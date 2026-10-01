@@ -3,6 +3,7 @@ package com.valafre.automod.movement;
 import com.valafre.automod.config.ModConfig;
 import com.valafre.automod.core.Debug;
 import com.valafre.automod.core.PlayerState;
+import com.valafre.automod.nav.NavPoint;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.Level;

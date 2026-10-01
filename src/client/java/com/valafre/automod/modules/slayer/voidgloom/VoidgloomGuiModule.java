@@ -134,6 +134,14 @@ public final class VoidgloomGuiModule implements GuiModule {
 			.toggle("Lissage du chemin", "Supprime les points inutiles quand le tronçon est praticable", () -> c().navPathSmoothing, v -> c().navPathSmoothing = v)
 			.slider("Points regardés en avant", "Vise le point le plus lointain directement franchissable", () -> c().navLookAheadNodes, v -> c().navLookAheadNodes = (int) v, 1, 16, 1, 0, "")
 			.slider("Mémoire des échecs", "Durée du surcoût d'une case refusée", () -> c().navFailureMemoryMs, v -> c().navFailureMemoryMs = (int) v, 500, 10000, 250, 0, " ms");
+		b.card("Calcul asynchrone", "Les calculs lourds tournent dans un thread dédié, jamais sur le thread Minecraft")
+			.slider("Budget du chemin global", "Temps max du A* dans le worker (résultat partiel au-delà)", () -> c().navMaxComputeTimeMs, v -> c().navMaxComputeTimeMs = v, 5, 100, 1, 0, " ms")
+			.slider("Budget du calcul local", "Temps max de la planification locale", () -> c().navLocalComputeTimeMs, v -> c().navLocalComputeTimeMs = v, 2, 30, 1, 0, " ms")
+			.slider("Rayon du snapshot global", "Zone copiée autour du joueur pour le chemin", () -> c().navSnapshotRadius, v -> c().navSnapshotRadius = (int) v, 12, 64, 2, 0, " m")
+			.slider("Marge du snapshot", "Zone ajoutée autour du joueur et du but", () -> c().navSnapshotMargin, v -> c().navSnapshotMargin = (int) v, 4, 24, 1, 0, " m")
+			.slider("Rayon du snapshot local", null, () -> c().navLocalSnapshotRadius, v -> c().navLocalSnapshotRadius = (int) v, 6, 20, 1, 0, " m")
+			.slider("Budget du snapshot", "Temps max passé sur le thread Minecraft à copier la géométrie", () -> c().navSnapshotBudgetMs, v -> c().navSnapshotBudgetMs = v, 0.5, 8, 0.5, 1, " ms")
+			.slider("Durée de vie du cache", "Ticks avant relecture d'une zone proche", () -> c().navTileTtlTicks, v -> c().navTileTtlTicks = (int) v, 2, 60, 1, 0, " t");
 		b.card("Caméra", "Rotation lissée et naturelle")
 			.toggle("Humaniser", "Légère variation de visée", () -> c().humanize, v -> c().humanize = v)
 			.toggle("Rotation par image", "Applique la rotation à chaque image affichée", () -> c().smoothFrameRotation, v -> c().smoothFrameRotation = v)

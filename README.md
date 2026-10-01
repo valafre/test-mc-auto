@@ -64,3 +64,13 @@ marge / impasse / mémoire d'échecs expirante) → `PathSmoother` (suppression 
 progression + marge + continuité + mobilité future + stabilité du cap). Aucun cap non sûr n'est exécuté ; sans chemin on ne
 fonce plus en ligne droite (navigation locale ou refus). Réglages : onglet Mouvement > Navigation. Debug : lignes `[NAV]`,
 `[NAV REFUSE]`, `[NAV HEIGHT]` et ligne HUD « Navigation (debug) ».
+
+### Navigation asynchrone (aucun calcul lourd sur le thread Minecraft)
+
+- `nav/` : moteur **sans dépendance Minecraft** (`NavGeometry`, `PathEngine` A* + lissage, `LocalPlanner`, `NavWorker`, `NavGrid`/`NavTile`).
+- `movement/NavigationWorldCache` (thread Minecraft) lit le monde UNE fois par état de bloc et par tuile (8x8x8, TTL) et assemble des
+  snapshots immuables ; `NavService` possède le worker et les statistiques `[NAV PERF]`.
+- Le worker a deux voies (chemin global, local) : 1 thread chacune, 1 calcul en cours + la demande la plus récente. Résultats immuables
+  avec génération ; le thread Minecraft les lit sans attendre, les valide (génération, comparaison avec le chemin courant, contrôle
+  rapide du cap) et garde l'ancien chemin tant que le nouveau n'est pas prêt.
+- Banc hors jeu : `tools/run-navbench.sh`.

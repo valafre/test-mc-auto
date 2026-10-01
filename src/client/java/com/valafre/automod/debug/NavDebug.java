@@ -22,6 +22,7 @@ public final class NavDebug {
 	public static volatile String camera = "—";
 	public static volatile String movement = "—";
 	public static volatile String reason = "-";
+	public static volatile String job = "-";
 	public static volatile int replanTicks = 2;
 	public static volatile long lastTick = -1000;
 	private static long lastLine = -1000;
@@ -39,11 +40,11 @@ public final class NavDebug {
 		lastLine = tick;
 		lastLocal = local;
 		String line = String.format(Locale.ROOT,
-			"[NAV] target=%s globalWaypoint=%s path=%d localHeading=%s safe=%s clear=%s feetY=%s jump=%s camera=%s movement=%s replan=%d",
+			"[NAV] target=%s globalWaypoint=%s path=%d localHeading=%s safe=%s clear=%s feetY=%s jump=%s camera=%s movement=%s replan=%d lastJob=%s",
 			targetId < 0 ? "—" : String.valueOf(targetId), globalWaypoint, pathNodes,
 			Double.isNaN(heading) ? "—" : String.format(Locale.ROOT, "%.0f", heading), local.equals("SAFE"),
 			Double.isNaN(clear) ? "—" : String.format(Locale.ROOT, "%.1f", clear),
-			Double.isNaN(ground) ? "—" : String.format(Locale.ROOT, "%.3f", ground), jump, camera, movement, replanTicks);
+			Double.isNaN(ground) ? "—" : String.format(Locale.ROOT, "%.3f", ground), jump, camera, movement, replanTicks, job);
 		Debug.log("NAV", () -> line);
 	}
 

@@ -20,7 +20,7 @@ public final class ModConfig {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger("automod");
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-	private static final int CURRENT_VERSION = 15;
+	private static final int CURRENT_VERSION = 16;
 	private static ModConfig instance = new ModConfig();
 
 	/** Sert à migrer les anciens fichiers de config dont les valeurs par défaut ont changé. */
@@ -285,6 +285,20 @@ public final class ModConfig {
 	public boolean navPathSmoothing = true;
 	/** Nombre de points du chemin regardés en avant pour viser le plus lointain directement franchissable. */
 	public int navLookAheadNodes = 8;
+	/** Rayon (blocs) maximal de la zone copiée pour le chemin global (snapshot autour du joueur et du but). */
+	public int navSnapshotRadius = 32;
+	/** Marge (blocs) ajoutée autour du joueur et du but dans le snapshot du chemin global. */
+	public int navSnapshotMargin = 10;
+	/** Rayon (blocs) du snapshot de la planification locale. */
+	public int navLocalSnapshotRadius = 10;
+	/** Budget de temps (ms) du calcul de chemin global dans le worker ; au-delà on rend le meilleur résultat disponible. */
+	public double navMaxComputeTimeMs = 25.0;
+	/** Budget de temps (ms) de la planification locale dans le worker. */
+	public double navLocalComputeTimeMs = 8.0;
+	/** Budget (ms) de construction du snapshot sur le thread Minecraft (les tuiles en retard se complètent au suivant). */
+	public double navSnapshotBudgetMs = 2.0;
+	/** Durée de vie (ticks) d'une tuile de géométrie proche avant relecture du monde (les lointaines vivent 6 fois plus). */
+	public int navTileTtlTicks = 10;
 	/** Durée (ms) du surcoût d'une case où le joueur a été refusé ou bloqué (expire toujours). */
 	public int navFailureMemoryMs = 3000;
 
@@ -400,6 +414,9 @@ public final class ModConfig {
 		if (c.configVersion < 15) { // navigation hybride : réévaluation 2 ticks ; on ne change pas de cible pour un petit gain de distance
 			c.navReplanTicks = 2;
 			c.retargetMarginBlocks = 6.0;
+		}
+		if (c.configVersion < 16) { // navigation asynchrone : valeurs par défaut des nouveaux champs
+			c.navReplanTicks = 2;
 		}
 		c.configVersion = CURRENT_VERSION;
 	}

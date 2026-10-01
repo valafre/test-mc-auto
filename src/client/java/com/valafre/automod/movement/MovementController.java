@@ -4,6 +4,8 @@ import com.valafre.automod.config.ModConfig;
 import com.valafre.automod.core.Debug;
 import com.valafre.automod.core.PlayerState;
 import com.valafre.automod.debug.NavDebug;
+import com.valafre.automod.nav.NavPoint;
+import com.valafre.automod.nav.PathResult;
 import com.valafre.automod.input.InputController;
 import com.valafre.automod.input.InputController.Key;
 import net.minecraft.core.BlockPos;
@@ -44,6 +46,10 @@ public final class MovementController {
 	private BlockPos pathGoal;
 	private int ticksSincePath = Integer.MAX_VALUE / 2;
 	private boolean lineClear;
+	private int ticksSinceRequest = Integer.MAX_VALUE / 2;
+	private boolean adoptForced = true;
+	private boolean lightRetry;
+	private String dbgLastResult = "-";
 	private boolean pathComplete = true;
 	private int ticksSinceLookahead;
 	private int collisionTicks;   // ticks consécutifs collé à un obstacle : déclenche un nouveau calcul de chemin
@@ -79,7 +85,7 @@ public final class MovementController {
 	/** Au-delà de cet écart (degrés) entre le regard et le point visé, on tourne la caméra plutôt que de marcher de biais. */
 	private static final float MAX_STRAFE_YAW = 60.0f;
 	private static final int VALIDATE_INTERVAL_TICKS = 4;
-	private static final int VALIDATE_NODES = 6;
+	private static final int VALIDATE_NODES = 3;
 	private int validateTicks;
 	private static final double FORWARD_ANGLE_ON = 70.0;
 	private static final double FORWARD_ANGLE_OFF = 90.0;
@@ -133,6 +139,17 @@ public final class MovementController {
 	 */
 	public MoveStatus moveTo(PlayerState state, String owner, Vec3 dest, double stopDistance, boolean controlLook,
 							 boolean cameraLocked) {
+		long t0 = System.nanoTime();
+		try {
+			return moveToImpl(state, owner, dest, stopDistance, controlLook, cameraLocked);
+		} finally {
+			NavService.get().addMainNanos(System.nanoTime() - t0); // profilage [NAV PERF] : coût réel sur le thread Minecraft
+			NavService.get().report(state.level());
+		}
+	}
+
+	private MoveStatus moveToImpl(PlayerState state, String owner, Vec3 dest, double stopDistance, boolean controlLook,
+								  boolean cameraLocked) {
 		ModConfig cfg = ModConfig.get();
 		Vec3 pos = state.position();
 		long now = state.level().getGameTime();
@@ -199,7 +216,9 @@ public final class MovementController {
 		String refusal = null;
 		Vec3 nudge = null;
 		if (steer != null) {
-			if (steer.noSafeTrajectory()) {
+			if (steer.pending()) {
+				refusal = "LOCAL_PENDING"; // le planificateur local n'a pas encore répondu : attente brève, pas de cap hasardeux
+			} else if (steer.noSafeTrajectory()) {
 				refusal = "NO_SAFE_TRAJECTORY";
 				nudge = steer.nudgePoint();
 			} else {
@@ -271,6 +290,7 @@ public final class MovementController {
 							boolean controlLook, boolean cameraLocked) {
 		NavDebug.pathNodes = path.size() - pathIndex;
 		NavDebug.replanTicks = ModConfig.get().navReplanTicks;
+		NavDebug.job = dbgLastResult;
 		NavDebug.camera = cameraLocked ? "ENEMY" : controlLook ? "PATH" : "ENEMY";
 		NavDebug.ground = state.position().y;
 		if (steer != null) {
@@ -300,6 +320,7 @@ public final class MovementController {
 	/** Oublie destination, chemin et hystérésis. Les touches sont relâchées par l'InputController au prochain endTick. */
 	public void reset() {
 		resetMotion();
+		paths.invalidate();
 		path = List.of();
 		pathGoal = null;
 		ticksSincePath = Integer.MAX_VALUE / 2;
@@ -354,7 +375,9 @@ public final class MovementController {
 	private MoveStatus refuseMove(PlayerState state, String owner, Vec3 dest, Vec3 waypoint,
 								  LocalNavigator.Steering steer, String reason, Vec3 nudge, boolean waypointValid,
 								  boolean cameraLocked) {
-		requestReplan(steer != null ? steer.blockedCell() : null);
+		if (!"LOCAL_PENDING".equals(reason)) { // simple attente du planificateur : pas de nouveau chemin pour autant
+			requestReplan(steer != null ? steer.blockedCell() : null);
+		}
 		intent = false; // on n'essaie pas d'avancer : le détecteur de blocage rapide ne doit pas réagir à cet arrêt voulu
 		forwardOnly = false;
 		boolean nudging = false;
@@ -404,7 +427,7 @@ public final class MovementController {
 			double nx = n.x() - pos.x;
 			double nz = n.z() - pos.z;
 			if (nx * nx + nz * nz >= LOOK_NEAR * LOOK_NEAR) {
-				return n.vec();
+				return NavPoints.vec(n);
 			}
 		}
 		// Rien de plus loin : on vise quand même le point s'il est assez loin pour que la direction soit stable.
@@ -420,9 +443,9 @@ public final class MovementController {
 		Vec3 prev = state.position();
 		for (int i = pathIndex; i < Math.min(path.size(), pathIndex + VALIDATE_NODES); i++) {
 			NavPoint n = path.get(i);
-			Vec3 c = n.vec();
+			Vec3 c = NavPoints.vec(n);
 			if (!Walkability.segmentWalkable(state.level(), prev, c, 0.0, false)) {
-				paths.avoid(n.cell());
+				paths.avoid(NavPoints.cell(n));
 				ticksSincePath = Integer.MAX_VALUE / 2;
 				forbidLineTicks = 10;
 				Debug.log("Movement", () -> "Chemin devenu mauvais en avant, recalcul");
@@ -599,6 +622,7 @@ public final class MovementController {
 			combatBack = false;
 		}
 		boolean safe = true;
+		boolean hold = false;
 		boolean jump = false;
 		boolean sprint = false;
 		boolean fwdKey = false;
@@ -610,11 +634,15 @@ public final class MovementController {
 			if (st != null) {
 				safe = st.safe();
 				jump = st.jump();
+				hold = st.pending(); // planificateur local en attente : on ne bouge pas quelques ticks, ce n'est pas un refus
+				if (hold) {
+					safe = true;
+				}
 			}
 			double delta = Math.toRadians(net.minecraft.util.Mth.wrapDegrees((float) (heading - state.yaw())));
 			double fwd = Math.cos(delta);
 			double side = Math.sin(delta);
-			if (safe) {
+			if (safe && !hold) {
 				fwdKey = hysteresis(combatFwdKey, fwd);
 				rightKey = hysteresis(combatRightKey, side);
 				leftKey = hysteresis(combatLeftKey, -side);
@@ -678,64 +706,139 @@ public final class MovementController {
 		Vec3 pos = state.position();
 		int replan = Math.max(1, cfg.navReplanTicks);
 
-		if (++ticksSinceLineCheck >= replan * 2) {
-			lineClear = paths.isClearLine(state.level(), pos, dest);
-			ticksSinceLineCheck = 0;
-		}
-		if (forbidLineTicks > 0) {
-			lineClear = false; // on vient de se bloquer sur cette "ligne droite" : on prend le chemin
-		}
-		if (lineClear) {
-			path = List.of();
-			return dest;
+		// 1. Résultat du worker (lecture sans attente) : validation, comparaison, transition douce.
+		PathResult res = paths.poll();
+		if (res != null) {
+			adoptResult(state, res, dest);
 		}
 
+		// 2. La destination a fortement bougé (téléportation de la cible...) : le chemin et les résultats en vol sont obsolètes.
+		//    On invalide le chemin, pas la cible ; la navigation locale guide en attendant le nouveau calcul.
 		BlockPos goal = Walkability.cellOf(dest);
+		if (pathGoal != null && pathGoal.distSqr(goal) > 36) {
+			paths.invalidate();
+			path = List.of();
+			pathIndex = 0;
+			lineClear = false;
+			pathGoal = null;
+		}
 		boolean goalMoved = pathGoal == null || pathGoal.distSqr(goal) > 4;
-		// Chemin partiel : recherche plus large mais moins souvent (limite le coût CPU).
+
+		// 3. Contrôle léger toutes les navReplanTicks : faut-il LANCER un calcul ? (jamais un A* complet à chaque contrôle)
+		ticksSinceRequest++;
+		ticksSincePath++;
 		int interval = pathComplete ? cfg.pathRecomputeIntervalTicks : cfg.pathRecomputeIntervalTicks * 2;
-		int budget = pathComplete ? cfg.pathMaxNodes : cfg.pathMaxNodes * 2;
-		boolean forced = ticksSincePath > Integer.MAX_VALUE / 4 || collisionTicks > 12 || pathIndex >= path.size();
-		boolean needsPath = goalMoved || ++ticksSincePath >= interval || forced;
-		if (needsPath) {
-			PathController.PathResult result = paths.findPathBestEffort(state.level(), pos, goal, budget);
-			List<NavPoint> fresh = cfg.navPathSmoothing
-				? PathSmoother.smooth(state.level(), pos, result.path(), cfg.navSafetyMargin) : result.path();
-			// Engagement dans un chemin : un recalcul périodique ne remplace pas le chemin en cours par un autre de longueur
-			// comparable (deux routes presque équivalentes faisaient faire demi-tour au joueur). On change seulement si c'est
-			// nettement plus court ou imposé (chemin invalide, but déplacé).
-			int remaining = path.size() - pathIndex;
-			boolean keepOld = !forced && !goalMoved && remaining > 2 && !fresh.isEmpty()
-				&& fresh.size() > remaining * 0.8 && result.complete() == pathComplete;
-			if (keepOld) {
-				ticksSincePath = 0;
-			} else {
-				path = fresh;
-				pathGeneration++;
-				pathComplete = result.complete();
-				pathIndex = 0;
-				pathGoal = goal;
-				ticksSincePath = 0;
-				collisionTicks = 0;
+		boolean urgent = ticksSincePath > Integer.MAX_VALUE / 4 || collisionTicks > 12;
+		boolean needy = !lineClear && (path.isEmpty() || pathIndex >= path.size());
+		boolean periodic = ticksSincePath >= interval;
+		if (ticksSinceRequest >= replan && (goalMoved || urgent || (needy || periodic) && !paths.busy())) {
+			if (urgent || goalMoved || needy) {
+				adoptForced = true;
 			}
+			paths.request(state.level(), pos, dest, lightRetry);
+			pathGoal = goal;
+			ticksSinceRequest = 0;
+			ticksSincePath = 0;
+			collisionTicks = 0;
+		}
+
+		// 4. Ligne directe validée par le worker.
+		if (lineClear && forbidLineTicks <= 0 && !goalMoved) {
+			return dest;
 		}
 		if (path.isEmpty()) {
-			return null;
+			return null; // pas encore de chemin : la navigation locale guide vers la destination (jamais de ligne droite aveugle)
 		}
-		while (pathIndex < path.size() - 1 && reached(pos, path.get(pathIndex), WAYPOINT_REACHED + 0.6 * turnFactor(pos))) {
+		while (pathIndex < path.size() - 1 && (reached(pos, path.get(pathIndex), WAYPOINT_REACHED + 0.6 * turnFactor(pos))
+			|| passedPoint(pos, pathIndex))) {
 			pathIndex++;
 		}
 		// Look-ahead : on vise le point le plus lointain (parmi les prochains) directement franchissable, pas le prochain nœud.
+		// Contrôle borné (4 candidats max, <= 14 blocs, géométrie en cache).
 		if (++ticksSinceLookahead >= replan) {
 			ticksSinceLookahead = 0;
-			for (int j = Math.min(path.size() - 1, pathIndex + Math.max(1, cfg.navLookAheadNodes)); j > pathIndex; j--) {
-				if (paths.isClearLine(state.level(), pos, path.get(j).vec())) {
+			int far = Math.min(path.size() - 1, pathIndex + Math.max(1, cfg.navLookAheadNodes));
+			int tested = 0;
+			for (int j = far; j > pathIndex && tested < 4; j--) {
+				tested++;
+				if (paths.isClearLine(state.level(), pos, NavPoints.vec(path.get(j)))) {
 					pathIndex = j;
 					break;
 				}
 			}
 		}
-		return path.get(pathIndex).vec();
+		return NavPoints.vec(path.get(pathIndex));
+	}
+
+	/** Le joueur a-t-il déjà dépassé le point i (plus près du point suivant que ce point ne l'est lui-même) ? Transition douce entre chemins. */
+	private boolean passedPoint(Vec3 pos, int i) {
+		if (i + 1 >= path.size()) {
+			return false;
+		}
+		NavPoint a = path.get(i);
+		NavPoint b = path.get(i + 1);
+		double ab = Math.hypot(b.x() - a.x(), b.z() - a.z());
+		double pb = Math.hypot(b.x() - pos.x, b.z() - pos.z);
+		double pa = Math.hypot(a.x() - pos.x, a.z() - pos.z);
+		return pb < ab && pb < pa && Math.abs(a.feetY() - pos.y) < 1.2;
+	}
+
+	/** Longueur restante du chemin depuis la position (comparaison de qualité entre deux chemins). */
+	private static double remainingLength(Vec3 pos, List<NavPoint> pts, int from) {
+		double len = 0;
+		double x = pos.x;
+		double z = pos.z;
+		for (int i = from; i < pts.size(); i++) {
+			len += Math.hypot(pts.get(i).x() - x, pts.get(i).z() - z) + Math.abs(pts.get(i).feetY() - pos.y) * 0.3;
+			x = pts.get(i).x();
+			z = pts.get(i).z();
+		}
+		return len;
+	}
+
+	/**
+	 * Un chemin terminé arrive du worker. Échec : on garde l'ancien chemin (et on retente en plus léger). Succès : on ne remplace
+	 * un chemin encore valide que si le nouveau est nettement meilleur (ou si l'ancien est invalide / le but a changé) ; la
+	 * transition est douce (les points déjà dépassés sont sautés).
+	 */
+	private void adoptResult(PlayerState state, PathResult res, Vec3 dest) {
+		Vec3 pos = state.position();
+		if (!res.usable()) {
+			lightRetry = true; // prochain calcul plus léger (moins de nœuds, zone et but plus proches)
+			ticksSincePath = Integer.MAX_VALUE / 2;
+			dbgLastResult = "FAILED";
+			return;
+		}
+		lightRetry = false;
+		BlockPos goal = Walkability.cellOf(dest);
+		BlockPos resGoal = new BlockPos(res.goalCx(), res.goalCy(), res.goalCz());
+		if (!paths.lastClipped() && resGoal.distSqr(goal) > 100) {
+			dbgLastResult = "OBSOLETE (but déplacé)";
+			return; // la cible a bougé pendant le calcul : un autre calcul est déjà demandé
+		}
+		boolean complete = res.status() == PathResult.Status.COMPLETE && !paths.lastClipped();
+		boolean oldValid = !path.isEmpty() && pathIndex < path.size();
+		List<NavPoint> fresh = res.points();
+		double oldCost = oldValid ? remainingLength(pos, path, pathIndex) : Double.MAX_VALUE;
+		double freshCost = remainingLength(pos, fresh, 0);
+		boolean better = !oldValid || adoptForced || freshCost < oldCost * 0.85 || (complete && !pathComplete);
+		dbgLastResult = res.status() + (res.directLine() ? "/ligne" : "") + (better ? " ADOPTÉ" : " conservé l'ancien");
+		if (!better) {
+			return;
+		}
+		adoptForced = false;
+		pathGeneration++;
+		pathComplete = complete;
+		if (res.directLine()) {
+			lineClear = true;
+			path = List.of();
+			pathIndex = 0;
+		} else {
+			lineClear = false;
+			path = fresh;
+			pathIndex = 0;
+		}
+		collisionTicks = 0;
 	}
 
 	/**
