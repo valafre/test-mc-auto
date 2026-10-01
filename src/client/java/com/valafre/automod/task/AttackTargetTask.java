@@ -26,10 +26,16 @@ public final class AttackTargetTask extends Task {
 	/** Reculer seulement si on est vraiment collé dans la cible. */
 	private static final double CLOSE_BACK_DISTANCE = 1.1;
 
+	private static final int WALL_TICKS_BEFORE_DETOUR = 8;
+	private static final int DETOUR_TICKS = 40;
+
 	private final LivingEntity target;
 	private final boolean holdPosition;
 	private final boolean sneak;
 	private final Chase chase = new Chase();
+	/** Ticks consécutifs collé à un obstacle sans avancer, et ticks restants de contournement par chemin. */
+	private int wallTicks;
+	private int detourTicks;
 
 	/** @param sneak true : reste accroupi pendant toute la tâche (combat contre le boss)
 	 *  @param holdPosition true : le joueur garde sa position (imposée par une mécanique), vise et frappe sans bouger */
@@ -61,12 +67,23 @@ public final class AttackTargetTask extends Task {
 		}
 
 		if (!holdPosition) {
-			boolean close = sight && info.distance() <= cfg.approachDistance + CLOSE_ZONE_MARGIN;
+			var player = f.player().player();
+			boolean pushing = player.horizontalCollision && player.getDeltaMovement().horizontalDistanceSqr() < 0.0025;
+			wallTicks = pushing ? wallTicks + 1 : 0;
+			if (wallTicks > WALL_TICKS_BEFORE_DETOUR) { // collé à un mur / une vitre / un rebord : on contourne par le chemin
+				detourTicks = DETOUR_TICKS;
+				wallTicks = 0;
+			}
+			boolean detour = detourTicks > 0;
+			if (detour) {
+				detourTicks--;
+			}
+			boolean close = sight && !detour && info.distance() <= cfg.approachDistance + CLOSE_ZONE_MARGIN;
 			if (close) {
 				// Au contact : on avance en continu vers la cible (pas d'arrêt pour frapper), sans balayer l'écran.
 				f.movement().combatMove(f.player(), owner(), info.distance(), CLOSE_BACK_DISTANCE, cfg.combatMinDistance, 0);
 			} else {
-				chase.step(f, owner(), target, info, sight); // trop loin ou sans ligne de vue : on rejoint / contourne
+				chase.step(f, owner(), target, info, sight && !detour); // trop loin ou sans ligne de vue : on rejoint / contourne
 			}
 		}
 		if (sneak) {
