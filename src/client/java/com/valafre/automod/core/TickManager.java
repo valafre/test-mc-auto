@@ -39,5 +39,6 @@ public final class TickManager {
 		framework.rotation().update(state);    // un seul pas de rotation, après toutes les demandes
 		framework.input().endTick(mc);         // application des touches (relâche celles non redemandées)
 		com.valafre.automod.debug.CombatTrace.emit(framework); // diagnostic (debug uniquement), aucun effet sur le comportement
+		com.valafre.automod.debug.StepTrace.tick(framework);   // diagnostic des surfaces à hauteur partielle (debug uniquement)
 	}
 }

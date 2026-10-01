@@ -191,6 +191,7 @@ public final class PathController {
 			Vec3 a = new Vec3(base.getX() + 0.5, Walkability.standHeight(level, base), base.getZ() + 0.5);
 			Vec3 b = new Vec3(next.getX() + 0.5, Walkability.standHeight(level, next), next.getZ() + 0.5);
 			if (!Walkability.segmentWalkable(level, a, b, 0.02, false)) {
+				com.valafre.automod.debug.StepTrace.astarReject(level, base, next, a, b); // diagnostic (debug uniquement)
 				return;
 			}
 		}

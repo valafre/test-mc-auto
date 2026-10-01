@@ -235,6 +235,7 @@ public final class LocalNavigator {
 					ny = y + rise;
 					if (!Walkability.bodyFreeAt(level, nx, ny, nz, margin)) {
 						blocked = BlockPos.containing(nx, y + 0.05, nz);
+						com.valafre.automod.debug.StepTrace.rolloutBlock(level, "MARCHE_CORPS_BLOQUE_APRES_MONTEE", i, new Vec3(x, y, z), nx, ny, nz, headingDeg, rise, Double.NaN);
 						break;
 					}
 					if (rise > 0.6 && jumpStep < 0) {
@@ -242,6 +243,7 @@ public final class LocalNavigator {
 					}
 				} else {
 					blocked = BlockPos.containing(nx, y + 0.05, nz);
+					com.valafre.automod.debug.StepTrace.rolloutBlock(level, "CORPS_BLOQUE_SANS_MONTEE_POSSIBLE", i, new Vec3(x, y, z), nx, ny, nz, headingDeg, rise, Double.NaN);
 					break;
 				}
 			}
@@ -249,6 +251,8 @@ public final class LocalNavigator {
 				double top = groundTop(level, nx, nz, ny, ny - 1.1);
 				if (Double.isNaN(top) || !Walkability.bodyFreeAt(level, nx, top, nz, margin)) {
 					blocked = BlockPos.containing(nx, ny - 0.5, nz); // vide devant : bord de plateforme
+					com.valafre.automod.debug.StepTrace.rolloutBlock(level, Double.isNaN(top) ? "SOL_ABSENT_SOUS_LE_CENTRE" : "CENTRE_SANS_APPUI_PUIS_CORPS_BLOQUE_A_LA_HAUTEUR_DU_SOL_INFERIEUR",
+						i, new Vec3(x, y, z), nx, ny, nz, headingDeg, Double.NaN, top);
 					break;
 				}
 				ny = top;
