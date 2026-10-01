@@ -56,6 +56,8 @@ public final class MovementController {
 	// Déblocage rapide : fenêtre courte de progrès, escalade de manoeuvres, cases à éviter.
 	/** Au-delà de cet écart (degrés) entre le regard et le point visé, on tourne la caméra plutôt que de marcher de biais. */
 	private static final float MAX_STRAFE_YAW = 60.0f;
+	private static final double PATH_END_RADIUS = 0.6;
+	private static final double LOOK_NEAR = 1.2;
 	private static final int SAFE_REPLAN_COOLDOWN_TICKS = 10;
 	private int safeReplanCooldown;
 	private static final double SAFE_CHECK_LENGTH = 1.6;
@@ -119,6 +121,19 @@ public final class MovementController {
 			lastStatus = path.isEmpty() ? "MOVING (ligne droite)" : "MOVING (chemin " + (pathComplete ? "complet" : "partiel") + ", " + (path.size() - pathIndex) + " cases)";
 		}
 
+		// Fin de chemin atteinte alors que la destination reste plus loin (cible inaccessible, bout de plateforme) : inutile de
+		// tourner sur place autour du dernier point ; on s'arrête et c'est au module de choisir autre chose.
+		if (!path.isEmpty() && pathIndex >= path.size() - 1 && waypoint != dest) {
+			BlockPos last = path.get(path.size() - 1);
+			double ex = last.getX() + 0.5 - pos.x;
+			double ez = last.getZ() + 0.5 - pos.z;
+			if (ex * ex + ez * ez < PATH_END_RADIUS * PATH_END_RADIUS && Math.abs(last.getY() - pos.y) < 1.2) {
+				resetMotion();
+				lastStatus = "FIN DE CHEMIN (destination inaccessible)";
+				return MoveStatus.ARRIVED;
+			}
+		}
+
 		if (updateStuck(pos)) {
 			Debug.log("Movement", () -> "Bloqué, abandon de la destination " + dest);
 			lastStatus = "BLOCKED (pas de progrès)";
@@ -136,7 +151,10 @@ public final class MovementController {
 		}
 		if (controlLook) {
 			// Regard à hauteur des yeux pour garder un pitch neutre pendant la marche.
-			rotation.lookAt(new Vec3(waypoint.x, state.eyePosition().y, waypoint.z), null, "PATH");
+			Vec3 lookTarget = lookAheadPoint(pos, waypoint);
+			if (lookTarget != null) {
+				rotation.lookAt(new Vec3(lookTarget.x, state.eyePosition().y, lookTarget.z), null, "PATH");
+			}
 		}
 		if (!maneuvering) {
 			applyKeys(state, owner, waypoint, horizontal, stopDistance, cfg);
@@ -187,6 +205,28 @@ public final class MovementController {
 			Debug.log("Movement", () -> "Tronçon non praticable, nouveau chemin");
 		}
 		return wp;
+	}
+
+	/**
+	 * Point que la caméra regarde pendant la marche : le point de chemin, mais dès qu'on en est tout près on regarde plus
+	 * loin (prochains nœuds), comme un joueur qui anticipe. Sans rien plus loin, la caméra ne bouge pas : viser un point
+	 * à 0,3 bloc faisait tourner l'écran à chaque pas.
+	 */
+	private Vec3 lookAheadPoint(Vec3 pos, Vec3 waypoint) {
+		double dx = waypoint.x - pos.x;
+		double dz = waypoint.z - pos.z;
+		if (dx * dx + dz * dz >= LOOK_NEAR * LOOK_NEAR) {
+			return waypoint;
+		}
+		for (int j = Math.min(path.size() - 1, pathIndex + 4); j > pathIndex; j--) {
+			BlockPos n = path.get(j);
+			double nx = n.getX() + 0.5 - pos.x;
+			double nz = n.getZ() + 0.5 - pos.z;
+			if (nx * nx + nz * nz >= LOOK_NEAR * LOOK_NEAR) {
+				return new Vec3(n.getX() + 0.5, n.getY(), n.getZ() + 0.5);
+			}
+		}
+		return null;
 	}
 
 	/** Le joueur est-il en train de se débloquer ? (les appelants relâchent alors le sneak, etc.) */
