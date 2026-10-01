@@ -28,6 +28,8 @@ public final class RotationController {
 	private static final float RETARGET_JUMP_DEG = 25.0f;
 	private static final float COAST_DECAY = 0.6f;
 	private static final float COAST_MIN = 0.05f;
+	/** Vitesse max quand la caméra suit seulement le chemin (marche) : plus posée que pour viser un ennemi. */
+	private static final float WALK_PEAK_DEG = 7.0f;
 	private static final double EYE_SMOOTHING = 0.3;
 	/** Cible (bord de hitbox) plus proche que ça en horizontal : l'angle visé n'a plus de sens, la caméra se fige. */
 	private static final double NEAR_ENEMY_RANGE = 0.9;
@@ -208,8 +210,9 @@ public final class RotationController {
 				vYaw += dvYaw;
 				vPitch += dvPitch;
 				float speed = (float) Math.hypot(vYaw, vPitch);
-				if (speed > cfg.camPeakSpeedDeg) { // plafond sur la norme : les deux axes restent cohérents
-					float scale = cfg.camPeakSpeedDeg / speed;
+				float peak = "ENEMY".equals(gaze.source()) ? cfg.camPeakSpeedDeg : Math.min(cfg.camPeakSpeedDeg, WALK_PEAK_DEG);
+				if (speed > peak) { // plafond sur la norme : les deux axes restent cohérents
+					float scale = peak / speed;
 					vYaw *= scale;
 					vPitch *= scale;
 				}

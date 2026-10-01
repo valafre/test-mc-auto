@@ -27,6 +27,7 @@ public final class AttackTargetTask extends Task {
 	private static final double CLOSE_BACK_DISTANCE = 1.1;
 
 	private static final int WALL_TICKS_BEFORE_DETOUR = 3;
+	private static final int KEEP_LOOK_TICKS = 12;
 	private static final int DETOUR_TICKS = 25;
 
 	private final LivingEntity target;
@@ -37,6 +38,7 @@ public final class AttackTargetTask extends Task {
 	private int wallTicks;
 	private int detourTicks;
 	private boolean followDown;
+	private int sightLostTicks;
 
 	/** @param sneak true : reste accroupi pendant toute la tâche (combat contre le boss)
 	 *  @param holdPosition true : le joueur garde sa position (imposée par une mécanique), vise et frappe sans bouger */
@@ -63,7 +65,11 @@ public final class AttackTargetTask extends Task {
 
 		// Regard : l'ennemi si on le voit (ou si on garde la position), sinon le mouvement oriente vers le chemin.
 		Vec3 aim = f.hints().applyGlance(f.humanizer().aim(target, f.player()), target);
-		if (sight || holdPosition) {
+		// Ligne de vue perdue depuis moins de 0,6 s : on garde les yeux sur la cible (elle reparaît souvent au coin) au lieu
+		// de basculer vers le chemin, ce qui faisait tourner la caméra de ~100° dans un sens puis dans l'autre.
+		sightLostTicks = sight ? 0 : sightLostTicks + 1;
+		boolean recentlySaw = !sight && sightLostTicks <= KEEP_LOOK_TICKS;
+		if (sight || holdPosition || recentlySaw) {
 			f.rotation().lookAt(aim, target.getBoundingBox(), "ENEMY");
 		}
 
@@ -90,7 +96,7 @@ public final class AttackTargetTask extends Task {
 				// Au contact : on avance en continu vers la cible (pas d'arrêt pour frapper), sans balayer l'écran.
 				f.movement().combatMove(f.player(), owner(), info.distance(), CLOSE_BACK_DISTANCE, cfg.combatMinDistance, 0);
 			} else {
-				chase.step(f, owner(), target, info, sight && !detour); // trop loin ou sans ligne de vue : on rejoint / contourne
+				chase.step(f, owner(), target, info, sight && !detour, recentlySaw && !detour); // trop loin ou sans ligne de vue : on rejoint / contourne
 			}
 		}
 		// Le boss est tombé plus bas (rebord, plateforme) : on cesse de s'accroupir pour pouvoir le suivre dans le vide.
