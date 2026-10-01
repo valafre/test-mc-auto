@@ -342,14 +342,63 @@ public final class VoidgloomModule extends AbstractModule {
 			ps.position().distanceTo(t.position()), t.getHealth(), t.getMaxHealth(), TargetSelector.isValid(t), boss);
 	}
 
+	private EnderMan previousTarget;
+	private String previousDropReason = "-";
+	private long previousDropTick;
+	private long lastChangeTick = Long.MIN_VALUE / 2;
+	private final java.util.ArrayDeque<int[]> recentTargets = new java.util.ArrayDeque<>(); // {id, tick}
+
 	private void logSelected(Framework f, EnderMan t, boolean boss, String reason) {
 		Debug.log("Cible", () -> "SÉLECTION " + describeTarget(f, t, boss) + " | raison : " + reason);
+		logChange(f, previousTarget, t, reason);
+		previousTarget = null;
 	}
 
 	private void logDropped(Framework f, EnderMan t, boolean boss, String reason) {
 		if (t != null) {
 			Debug.log("Cible", () -> "ABANDON " + describeTarget(f, t, boss) + " | raison : " + reason);
+			previousTarget = t;
+			previousDropReason = reason;
+			previousDropTick = f.player().level().getGameTime();
 		}
+	}
+
+	/** Une seule ligne par changement de cible : ancien / nouveau, distances, écart, raison, heure exacte et oscillation A→B→A. */
+	private void logChange(Framework f, EnderMan oldT, EnderMan newT, String reason) {
+		if (!Debug.enabled()) {
+			return;
+		}
+		PlayerState ps = f.player();
+		long tick = ps.level().getGameTime();
+		int[] last2 = null; // cible choisie juste avant l'ancienne (la liste est du plus ancien au plus récent)
+		int idx = 0;
+		for (int[] r : recentTargets) {
+			if (idx++ == recentTargets.size() - 2) {
+				last2 = r;
+			}
+		}
+		// A -> B -> A : la nouvelle cible est celle d'avant l'ancienne, dans les 10 dernières secondes
+		boolean oscillation = oldT != null && last2 != null && last2[0] == newT.getId() && tick - last2[1] <= 200
+			&& oldT.getId() != newT.getId();
+		recentTargets.addLast(new int[] {newT.getId(), (int) tick});
+		while (recentTargets.size() > 4) {
+			recentTargets.pollFirst();
+		}
+		double distOld = oldT == null ? Double.NaN : ps.position().distanceTo(oldT.position());
+		double distNew = ps.position().distanceTo(newT.position());
+		String oldText = oldT == null ? "aucune" : String.format(java.util.Locale.ROOT, "#%d %s pos=(%.1f, %.1f, %.1f) valide=%s hp=%.0f/%.0f",
+			oldT.getId(), net.minecraft.world.entity.EntityType.getKey(oldT.getType()), oldT.getX(), oldT.getY(), oldT.getZ(),
+			TargetSelector.isValid(oldT), oldT.getHealth(), oldT.getMaxHealth());
+		String line = String.format(java.util.Locale.ROOT,
+			"[TARGET CHANGE] heure=%s tick=%d (+%d ticks depuis le changement précédent) | OLD_TARGET=%s | NEW_TARGET=#%d %s pos=(%.1f, %.1f, %.1f) hp=%.0f/%.0f"
+				+ " | DISTANCE_OLD=%s DISTANCE_NEW=%.1f DISTANCE_DIFF=%s | REASON=%s | ancienne cible abandonnée: %s%s",
+			java.time.LocalTime.now().format(java.time.format.DateTimeFormatter.ofPattern("HH:mm:ss.SSS")), tick, tick - lastChangeTick,
+			oldText, newT.getId(), net.minecraft.world.entity.EntityType.getKey(newT.getType()), newT.getX(), newT.getY(), newT.getZ(),
+			newT.getHealth(), newT.getMaxHealth(), Double.isNaN(distOld) ? "—" : String.format(java.util.Locale.ROOT, "%.1f", distOld), distNew,
+			Double.isNaN(distOld) ? "—" : String.format(java.util.Locale.ROOT, "%.1f", distOld - distNew), reason, previousDropReason,
+			oscillation ? " | ⚠ OSCILLATION A→B→A" : "");
+		lastChangeTick = tick;
+		Debug.log("Cible", () -> line);
 	}
 
 	/** Retire les Enderman récemment abandonnés car inaccessibles (derrière un mur, sur une autre plateforme...). */
@@ -399,18 +448,29 @@ public final class VoidgloomModule extends AbstractModule {
 		retargetAccum = 0;
 		PlayerState ps = f.player();
 		if (TargetInfo.of(ps, target).distance() <= cfg.attackDistance && f.combat().hasStableLineOfSight(ps, target)) {
+			Debug.log("Retarget", () -> String.format(java.util.Locale.ROOT, "ÉVALUATION cible actuelle #%d à %.1f : GARDÉE (au contact et visible)",
+				target.getId(), TargetInfo.of(ps, target).distance()));
 			return false; // déjà au contact : on ne lâche pas la cible qu'on frappe
 		}
 		EnderMan nearest = f.targetSelector().select(reachable(f, result.mobs()), ps.position(), null,
 			Math.max(cfg.targetSearchRange, cfg.farmSearchRange));
 		if (nearest == null || nearest == target) {
+			Debug.log("Retarget", () -> String.format(java.util.Locale.ROOT, "ÉVALUATION cible actuelle #%d à %.1f : GARDÉE (aucun autre candidat plus proche)",
+				target.getId(), target.position().distanceTo(ps.position())));
 			return false;
 		}
 		double current = target.position().distanceTo(ps.position());
 		double other = nearest.position().distanceTo(ps.position());
 		if (other >= current - cfg.retargetMarginBlocks) {
+			Debug.log("Retarget", () -> String.format(java.util.Locale.ROOT,
+				"ÉVALUATION cible actuelle #%d à %.1f vs candidat #%d à %.1f (gain %.1f < marge %.1f) : GARDÉE",
+				target.getId(), current, nearest.getId(), other, current - other, cfg.retargetMarginBlocks));
 			return false;
 		}
+		Debug.log("Retarget", () -> String.format(java.util.Locale.ROOT,
+			"ÉVALUATION cible actuelle #%d à %.1f vs candidat #%d à %.1f (gain %.1f >= marge %.1f) : CHANGEMENT (cible suivie depuis %d ticks, valide=%s, visible=%s)",
+			target.getId(), current, nearest.getId(), other, current - other, cfg.retargetMarginBlocks, acquiredTicks,
+			TargetSelector.isValid(target), f.combat().hasLineOfSight(ps, target)));
 		Debug.log("Voidgloom", () -> "Enderman plus proche trouvé (" + Math.round(other) + " au lieu de " + Math.round(current) + ")");
 		stopActions(f);
 		logDropped(f, target, targetIsBoss, "retarget : un autre Enderman est plus proche de " + String.format(java.util.Locale.ROOT, "%.1f", current - other)
