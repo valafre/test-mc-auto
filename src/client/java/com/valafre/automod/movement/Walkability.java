@@ -147,6 +147,13 @@ public final class Walkability {
 		return true;
 	}
 
+	/** Rien ne bloque le rayon {@code from} -> {@code to} (blocs pleins) ? Sert à savoir si une position permet de voir/frapper la cible. */
+	public static boolean rayClear(Level level, Vec3 from, Vec3 to, net.minecraft.world.entity.Entity viewer) {
+		net.minecraft.world.level.ClipContext context = new net.minecraft.world.level.ClipContext(from, to,
+			net.minecraft.world.level.ClipContext.Block.COLLIDER, net.minecraft.world.level.ClipContext.Fluid.NONE, viewer);
+		return level.clip(context).getType() == net.minecraft.world.phys.HitResult.Type.MISS;
+	}
+
 	public static boolean isInWorld(Level level, BlockPos pos) {
 		return !level.isOutsideBuildHeight(pos)
 			&& level.hasChunk(pos.getX() >> 4, pos.getZ() >> 4);

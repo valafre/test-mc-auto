@@ -5,6 +5,7 @@ import com.valafre.automod.core.Framework;
 import com.valafre.automod.core.Task;
 import com.valafre.automod.core.TaskStatus;
 import com.valafre.automod.input.InputController.Key;
+import com.valafre.automod.movement.CombatPositioner;
 import com.valafre.automod.targeting.TargetInfo;
 import com.valafre.automod.targeting.TargetSelector;
 import net.minecraft.world.entity.LivingEntity;
@@ -40,6 +41,7 @@ public final class AttackTargetTask extends Task {
 	private final boolean holdPosition;
 	private final boolean sneak;
 	private final Chase chase = new Chase();
+	private final CombatPositioner positioner = new CombatPositioner();
 	/** Ticks consécutifs collé à un obstacle sans avancer, et ticks restants de contournement par chemin. */
 	private int wallTicks;
 	private int detourTicks;
@@ -100,12 +102,6 @@ public final class AttackTargetTask extends Task {
 			var player = f.player().player();
 			boolean pushing = player.horizontalCollision && player.getDeltaMovement().horizontalDistanceSqr() < 0.0025;
 			wallTicks = pushing ? wallTicks + 1 : 0;
-			// Anticipation : un obstacle infranchissable juste devant dans la direction de la cible -> on contourne avant de le toucher.
-			Vec3 toTarget = target.position().subtract(player.position());
-			if (detourTicks == 0 && sight && player.onGround()
-				&& com.valafre.automod.movement.Walkability.riseAhead(player.level(), player.position(), toTarget.x, toTarget.z) > 1.1) {
-				detourTicks = DETOUR_TICKS;
-			}
 			if (wallTicks > WALL_TICKS_BEFORE_DETOUR) { // collé à un mur / une vitre / un rebord : on contourne par le chemin
 				detourTicks = DETOUR_TICKS;
 				wallTicks = 0;
@@ -125,9 +121,13 @@ public final class AttackTargetTask extends Task {
 				lastLagStop = true; // aucune touche de déplacement ce tick : la caméra rattrape
 			} else if (close) {
 				// Au contact : on avance en continu vers la cible (pas d'arrêt pour frapper), sans balayer l'écran.
-				f.movement().combatMove(f.player(), owner(), info.distance(), CLOSE_BACK_DISTANCE, cfg.combatMinDistance, 0);
+				boolean ok = f.movement().combatApproach(f.player(), owner(), target.position(), target.getBoundingBox().getCenter(),
+					info.distance(), CLOSE_BACK_DISTANCE, cfg.combatMinDistance);
+				if (!ok) { // aucune direction sûre vers la cible : on contourne par un chemin au lieu de pousser contre l'obstacle
+					detourTicks = DETOUR_TICKS;
+				}
 			} else {
-				chase.step(f, owner(), target, info, sight && !detour, !lookEnemy || detour); // trop loin ou sans ligne de vue : on rejoint / contourne
+				chase.step(f, owner(), target, info, sight && !detour, !lookEnemy || detour, positioner.choose(f.player(), target)); // trop loin ou sans ligne de vue : on rejoint / contourne
 			}
 		}
 		// Le boss est tombé plus bas (rebord, plateforme) : on cesse de s'accroupir pour pouvoir le suivre dans le vide.

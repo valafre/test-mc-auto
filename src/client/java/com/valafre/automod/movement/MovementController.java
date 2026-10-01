@@ -434,46 +434,86 @@ public final class MovementController {
 	private boolean combatForward;
 	private boolean combatBack;
 
-	/**
-	 * Mouvement continu pendant le combat : strafe (gauche/droite) autour de la cible + avancer/reculer pour garder la
-	 * distance entre {@code keepMin} et {@code keepMax}. Le regard est géré par l'appelant (il reste sur la cible).
-	 *
-	 * @param strafeDir +1 = droite, -1 = gauche, 0 = aucun mouvement latéral (avance/recul seulement)
-	 * @return false si le côté choisi est impraticable (mur, vide) : l'appelant doit inverser le sens
-	 */
-	public boolean combatMove(PlayerState state, String owner, double distance, double keepMin, double keepMax, int strafeDir) {
-		// Vecteur "droite" du joueur ; on vérifie qu'on ne va pas strafer dans un mur ou dans le vide.
-		double yawRad = Math.toRadians(state.yaw());
-		double rx = -Math.cos(yawRad);
-		double rz = -Math.sin(yawRad);
-		Vec3 pos = state.position();
-		BlockPos probe = BlockPos.containing(pos.x + rx * strafeDir * 0.9, pos.y + 0.05, pos.z + rz * strafeDir * 0.9);
-		boolean sideOk = Walkability.canStandAt(state.level(), probe) || Walkability.canStandAt(state.level(), probe.below());
+	private final LocalNavigator combatLocal = new LocalNavigator();
+	private boolean combatFwdKey;
+	private boolean combatLeftKey;
+	private boolean combatRightKey;
 
+	/**
+	 * Mouvement de combat NAVIGUÉ : on garde la distance de combat (entre {@code keepMin} et {@code keepMax}) en avançant
+	 * vers la cible sans jamais quitter des yeux. Le cap n'est pas la ligne droite vers la cible mais celui que choisit le
+	 * navigateur local (trajectoires simulées avec la vraie boîte du joueur, marge, cul-de-sac, cible gardée en vue) ;
+	 * avant / gauche / droite / sprint / saut sont combinés pour contourner un obstacle EN CONTINUANT d'avancer.
+	 * Le regard est géré par l'appelant (il reste sur la cible).
+	 *
+	 * @return false si aucune direction sûre vers la cible : l'appelant doit contourner par le chemin
+	 */
+	public boolean combatApproach(PlayerState state, String owner, Vec3 targetPos, Vec3 aim, double distance,
+								  double keepMin, double keepMax) {
+		ModConfig cfg = ModConfig.get();
 		combatForward = distance > keepMax + (combatForward ? -0.3 : 0.0);
 		combatBack = distance < keepMin + (combatBack ? 0.3 : 0.0);
 		if (combatForward && combatBack) {
 			combatBack = false;
 		}
-		if (strafeDir != 0 && sideOk) {
-			input.request(owner, strafeDir > 0 ? Key.RIGHT : Key.LEFT, true);
+		boolean safe = true;
+		boolean jump = false;
+		boolean sprint = false;
+		boolean fwdKey = false;
+		boolean leftKey = false;
+		boolean rightKey = false;
+		if (combatForward) {
+			LocalNavigator.Steering st = combatLocal.steer(state, targetPos, new LocalNavigator.Combat(aim, keepMax));
+			double heading = st != null ? st.headingDeg() : RotationController.computeYaw(state.position(), targetPos);
+			if (st != null) {
+				safe = st.safe();
+				jump = st.jump();
+			}
+			double delta = Math.toRadians(net.minecraft.util.Mth.wrapDegrees((float) (heading - state.yaw())));
+			double fwd = Math.cos(delta);
+			double side = Math.sin(delta);
+			if (safe) {
+				fwdKey = hysteresis(combatFwdKey, fwd);
+				rightKey = hysteresis(combatRightKey, side);
+				leftKey = hysteresis(combatLeftKey, -side);
+				if (leftKey && rightKey) {
+					leftKey = false;
+					rightKey = false;
+				}
+				sprint = st != null && st.sprintOk() && cfg.useSprint && fwdKey && fwd > 0.9;
+			}
+		} else {
+			combatLocal.reset();
 		}
-		input.request(owner, Key.FORWARD, combatForward);
-		input.request(owner, Key.BACK, combatBack);
+		combatFwdKey = fwdKey;
+		combatLeftKey = leftKey;
+		combatRightKey = rightKey;
+
+		boolean backKey = false;
+		if (combatBack) {
+			double rad = Math.toRadians(state.yaw());
+			Vec3 pos = state.position();
+			Vec3 behind = new Vec3(pos.x + Math.sin(rad) * 0.9, pos.y, pos.z - Math.cos(rad) * 0.9);
+			backKey = Walkability.segmentWalkable(state.level(), pos, behind, 0.0, true); // pas de recul dans un mur / le vide
+		}
+		input.request(owner, Key.FORWARD, fwdKey);
+		input.request(owner, Key.BACK, backKey);
+		input.request(owner, Key.LEFT, leftKey);
+		input.request(owner, Key.RIGHT, rightKey);
+		input.request(owner, Key.SPRINT, sprint);
 
 		if (jumpCooldown > 0) {
 			jumpCooldown--;
 		}
-		// Saut seulement devant une vraie marche d'un bloc dans la direction du regard (pas quand on frotte un mur).
 		double yawFwd = Math.toRadians(state.yaw());
-		boolean jump = state.onGround() && jumpCooldown == 0 && state.player().horizontalCollision
-			&& stepAhead(state, -Math.sin(yawFwd), Math.cos(yawFwd));
-		if (jump) {
+		boolean doJump = state.onGround() && jumpCooldown == 0
+			&& (jump || (state.player().horizontalCollision && stepAhead(state, -Math.sin(yawFwd), Math.cos(yawFwd))));
+		if (doJump) {
 			jumpCooldown = JUMP_COOLDOWN_TICKS;
 		}
-		input.request(owner, Key.JUMP, jump);
-		lastStatus = strafeDir == 0 ? "COMBAT (avance)" : "COMBAT (strafe " + (strafeDir > 0 ? "droite" : "gauche") + ")";
-		return sideOk;
+		input.request(owner, Key.JUMP, doJump);
+		lastStatus = !safe ? "COMBAT (aucune direction sûre)" : "COMBAT (navigation" + (leftKey ? ", gauche" : rightKey ? ", droite" : "") + ")";
+		return safe;
 	}
 
 	// ========================================

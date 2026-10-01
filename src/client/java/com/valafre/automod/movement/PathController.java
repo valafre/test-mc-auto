@@ -216,6 +216,11 @@ public final class PathController {
 	 * piège potentiel ; on l'évite fortement sauf si c'est le but. Test rapide : voisin orthogonal libre sur 2 blocs de
 	 * haut avec un sol dessous.
 	 */
+	/** Case sans véritable issue (une seule sortie ou aucune) : renfoncement, bout de couloir. */
+	public static boolean isDeadEnd(Level level, BlockPos pos) {
+		return deadEndPenalty(level, pos) > 0;
+	}
+
 	private static double deadEndPenalty(Level level, BlockPos pos) {
 		int exits = 0;
 		for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.Plane.HORIZONTAL) {

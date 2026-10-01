@@ -42,3 +42,16 @@ Un nouveau module = une classe `extends AbstractModule` enregistrée dans `AutoM
 La nature de la « mécanique au sol » du Voidgloom dépend du serveur et n'est pas déterminable depuis Minecraft/Fabric seuls.
 Le détecteur par défaut cherche un **bloc** (`mechanicBlockId`, défaut `minecraft:beacon`) : à confirmer en jeu
 (F3 + visée du bloc), puis ajuster la config. Si c'est une entité ou une particule, seul `GroundMechanicDetector` est à remplacer.
+
+## Navigation de combat (architecture)
+
+```
+Sélection de cible (VoidgloomModule / TargetSelector)
+  -> AttackTargetTask (combat + poursuite)
+       -> CombatPositioner   : position de combat viable autour de la cible (visible, à portée, issue de sortie, hystérésis)
+       -> MovementController : chemin global A* (PathController, validé à l'avance) + suivi
+            -> LocalNavigator : trajectoires candidates simulées (boîte réelle du joueur, marge, cul-de-sac, cible en vue)
+       -> combatApproach     : avance/strafe/sprint/saut navigués pendant que la caméra reste sur la cible
+  -> RotationController -> InputController
+Filet de sécurité parallèle : détection de blocage (MovementController.updateUnstuck + garde-fous de la tâche).
+```

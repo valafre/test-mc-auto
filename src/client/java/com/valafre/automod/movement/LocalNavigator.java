@@ -10,31 +10,39 @@ import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.VoxelShape;
 
 /**
- * Navigation locale prédictive. Le chemin global (A*) dit OÙ aller ; ce navigateur décide COMMENT, à chaque instant :
- * il génère plusieurs trajectoires candidates (cap droit vers le point guide, puis déviations de plus en plus fortes à
- * gauche et à droite), simule chacune quelques blocs en avant avec la vraie boîte du joueur (largeur, hauteur de passage,
+ * Navigation locale prédictive. Le chemin global (A*) ou la position de combat dit OÙ aller ; ce navigateur décide
+ * COMMENT, à chaque instant : il génère plusieurs trajectoires candidates (cap droit vers le guide, puis déviations
+ * croissantes à gauche et à droite), simule chacune en avant avec la vraie boîte du joueur (largeur, hauteur de passage,
  * marche, vide, marge de sécurité), élimine celles qui finissent contre un obstacle ou dans un cul-de-sac, et retient la
- * meilleure : celle qui progresse vers le guide, reste dégagée et laisse la possibilité de continuer après le contournement.
- * Le joueur commence donc à dévier AVANT l'obstacle ; la trajectoire revient d'elle-même vers le guide dès que la voie est libre.
+ * meilleure : elle progresse vers le guide, reste dégagée, laisse la possibilité de continuer après le contournement et,
+ * en combat, garde la cible visible et à portée.
+ *
+ * <p>La portée d'analyse dépend de la vitesse (plus on va vite, plus on regarde loin). Le cap retenu est conservé tant
+ * qu'il reste viable (contrôle rapide à chaque tick, replanification complète seulement si nécessaire) : pas de gauche/droite
+ * décidé à chaque tick.
  */
 public final class LocalNavigator {
 
-	/** Résultat : point de cap à regarder / rejoindre (toujours à {@link #LOOK_DISTANCE} devant) et indications d'allure. */
+	/** Contexte de combat : point à garder en vue (cible) et distance souhaitée. */
+	public record Combat(Vec3 aim, double range) {}
+
+	/** Résultat : point de cap à rejoindre (toujours à {@link #LOOK_DISTANCE} devant) et indications d'allure. */
 	public record Steering(Vec3 point, double headingDeg, boolean safe, int clearSteps, boolean jump, boolean sprintOk,
 						   BlockPos blockedCell) {}
 
 	private record Rollout(int clear, Vec3 end, int jumpStep, double comfort, BlockPos blocked) {}
 
-	private static final int HORIZON_STEPS = 16;
-	private static final int MIN_SAFE_STEPS = 6;
-	private static final double WALK = 0.215;
+	private static final int MAX_STEPS = 24;
+	private static final int MIN_STEPS = 8;
+	/** Distance minimale (blocs) qu'un cap doit pouvoir parcourir sans obstacle pour être jugé sûr. */
+	private static final double MIN_SAFE_DISTANCE = 1.4;
 	/** Marge de sécurité de chaque côté du corps (0,6) : un passage doit avoir 0,84 de large. */
 	private static final double MARGIN = 0.12;
 	/** Marge « confortable » : mesure combien la trajectoire s'éloigne des parois. */
 	private static final double COMFORT_MARGIN = 0.3;
 	private static final double JUMP_REACH = 1.15;
 	private static final double LOOK_DISTANCE = 3.5;
-	private static final int REPLAN_TICKS = 2;
+	private static final int REPLAN_TICKS = 4;
 	private static final double[] OFFSETS = {0, 12, -12, 25, -25, 40, -40, 60, -60, 85, -85, 120, -120};
 
 	private Steering last;
@@ -49,8 +57,12 @@ public final class LocalNavigator {
 		prevHeading = Double.NaN;
 	}
 
-	/** @return le cap à suivre vers {@code guide}, ou null si la navigation locale ne s'applique pas (marche, chute, très près). */
 	public Steering steer(PlayerState state, Vec3 guide) {
+		return steer(state, guide, null);
+	}
+
+	/** @return le cap à suivre vers {@code guide}, ou null si la navigation locale ne s'applique pas (en l'air, chute, très près). */
+	public Steering steer(PlayerState state, Vec3 guide, Combat combat) {
 		Vec3 pos = state.position();
 		Level level = state.level();
 		if (!state.onGround() || guide.y > pos.y + JUMP_REACH + 0.1 || guide.y < pos.y - 0.6) {
@@ -61,10 +73,17 @@ public final class LocalNavigator {
 		if (gdist < 0.4) {
 			return null;
 		}
-		boolean replan = last == null || ++ticksSincePlan >= REPLAN_TICKS
+		double stepLen = Mth.clamp(state.horizontalSpeed(), 0.2, 0.28);
+		int minSafe = (int) Math.ceil(MIN_SAFE_DISTANCE / stepLen);
+		boolean due = last == null || ++ticksSincePlan >= REPLAN_TICKS
 			|| guideAtPlan == null || guideAtPlan.distanceToSqr(guide) > 1.0;
-		if (replan) {
-			last = plan(level, pos, guide, gdist);
+		if (!due) {
+			// Contrôle rapide à chaque tick : le cap actuel mène-t-il encore quelque part ? Sinon on replanifie tout de suite.
+			Rollout quick = rollout(level, pos, last.headingDeg(), minSafe + 2, stepLen, MARGIN, false);
+			due = quick.clear() < minSafe + 2;
+		}
+		if (due) {
+			last = plan(state, guide, gdist, combat, stepLen, minSafe);
 			guideAtPlan = guide;
 			ticksSincePlan = 0;
 			prevHeading = last.headingDeg();
@@ -79,54 +98,69 @@ public final class LocalNavigator {
 	// PLANIFICATION
 	// ========================================
 
-	private Steering plan(Level level, Vec3 pos, Vec3 guide, double gdist) {
+	private Steering plan(PlayerState state, Vec3 guide, double gdist, Combat combat, double stepLen, int minSafe) {
+		Level level = state.level();
+		Vec3 pos = state.position();
 		float guideYaw = RotationController.computeYaw(pos, guide);
-		int steps = Mth.clamp((int) (gdist / WALK) + 3, 6, HORIZON_STEPS);
+		// Portée d'analyse : 3 blocs + ce que l'on parcourt en ~8 ticks (plus on va vite, plus on regarde loin).
+		double horizon = 3.0 + 8.0 * stepLen;
+		int steps = Mth.clamp((int) Math.round(Math.min(horizon, gdist + 0.8) / stepLen), MIN_STEPS, MAX_STEPS);
+		int safeSteps = Math.min(minSafe, steps);
 
 		// Voie directe : la plupart du temps c'est la bonne, inutile d'évaluer les autres.
-		Rollout straight = rollout(level, pos, guideYaw, steps, MARGIN, true);
-		if (straight.clear() == steps && straight.comfort() >= 0.9 && canContinue(level, straight.end(), guideYaw)) {
-			return finish(guideYaw, 0, steps, straight);
+		Rollout straight = rollout(level, pos, guideYaw, steps, stepLen, MARGIN, true);
+		if (straight.clear() == steps && straight.comfort() >= 0.9 && canContinue(level, straight.end(), guideYaw, stepLen)) {
+			return finish(guideYaw, 0, steps, safeSteps, straight);
 		}
 
 		double bestScore = -1e9;
 		double bestOffset = 0;
 		Rollout best = straight;
-		int bestSteps = steps;
 		for (double offset : OFFSETS) {
 			double heading = guideYaw + offset;
-			Rollout r = offset == 0 ? straight : rollout(level, pos, heading, steps, MARGIN, true);
+			Rollout r = offset == 0 ? straight : rollout(level, pos, heading, steps, stepLen, MARGIN, true);
 			double endDist = Math.hypot(guide.x - r.end().x, guide.z - r.end().z);
 			double progress = gdist - endDist;
 			double frac = r.clear() / (double) steps;
 			double score = frac * 10.0 + progress * 2.0 + r.comfort() * 1.5 - Math.abs(offset) / 90.0
 				- (Double.isNaN(prevHeading) ? 0 : Math.abs(Mth.wrapDegrees((float) (heading - prevHeading))) / 90.0 * 1.5);
-			if (r.clear() < Math.min(MIN_SAFE_STEPS, steps)) {
+			if (r.clear() < safeSteps) {
 				score -= 6.0; // se bloque presque tout de suite : à éviter absolument
-			} else if (r.clear() == steps && !canContinue(level, r.end(), heading)) {
-				score -= 5.0; // atteindrait un cul-de-sac : on n'y entre pas
+			} else {
+				if (r.clear() == steps && !canContinue(level, r.end(), heading, stepLen)) {
+					score -= 5.0; // atteindrait un cul-de-sac : on n'y entre pas
+				}
+				if (combat != null) {
+					// Combat : de là où cette trajectoire nous amène, voit-on la cible, et à bonne distance ?
+					Vec3 eyeEnd = new Vec3(r.end().x, r.end().y + 1.62, r.end().z);
+					if (Walkability.rayClear(level, eyeEnd, combat.aim(), state.player())) {
+						score += 2.0;
+					}
+					double d = Math.hypot(combat.aim().x - r.end().x, combat.aim().z - r.end().z);
+					score -= Math.min(2.0, Math.abs(d - combat.range()) * 0.6);
+				}
 			}
 			if (score > bestScore) {
 				bestScore = score;
 				bestOffset = offset;
 				best = r;
-				bestSteps = steps;
 			}
 		}
-		return finish(guideYaw, bestOffset, bestSteps, best);
+		return finish(guideYaw, bestOffset, steps, safeSteps, best);
 	}
 
-	private Steering finish(float guideYaw, double offset, int steps, Rollout r) {
-		boolean safe = r.clear() >= Math.min(MIN_SAFE_STEPS, steps);
+	private Steering finish(float guideYaw, double offset, int steps, int safeSteps, Rollout r) {
+		boolean safe = r.clear() >= safeSteps;
 		boolean jump = r.jumpStep() > 0 && r.jumpStep() <= 4;
 		boolean sprintOk = r.clear() == steps && steps >= 12 && r.comfort() >= 0.85 && Math.abs(offset) <= 15 && r.jumpStep() < 0;
 		return new Steering(null, guideYaw + offset, safe, r.clear(), jump, sprintOk, r.blocked());
 	}
 
 	/** Après le déplacement simulé, peut-on encore avancer (tout droit ou en biais) ? Sinon c'est un piège. */
-	private boolean canContinue(Level level, Vec3 end, double heading) {
+	private boolean canContinue(Level level, Vec3 end, double heading, double stepLen) {
+		int need = (int) Math.ceil(1.0 / stepLen);
 		for (double off : new double[] {0, 35, -35}) {
-			if (rollout(level, end, heading + off, 5, MARGIN, false).clear() >= 5) {
+			if (rollout(level, end, heading + off, need, stepLen, MARGIN, false).clear() >= need) {
 				return true;
 			}
 		}
@@ -138,11 +172,11 @@ public final class LocalNavigator {
 	// ========================================
 
 	/**
-	 * Avance la boîte du joueur pas à pas (0,215 bloc / tick) le long de {@code headingDeg}. À chaque pas : la place doit
-	 * suffire (marge comprise) ; sinon une marche franchissable (monter d'au plus 1,15) est tentée ; le sol doit exister
-	 * (une descente de 1 bloc max est acceptée, pas le vide).
+	 * Avance la boîte du joueur pas à pas ({@code stepLen} bloc / tick) le long de {@code headingDeg}. À chaque pas : la
+	 * place doit suffire (marge comprise) ; sinon une marche franchissable (monter d'au plus 1,15) est tentée ; le sol doit
+	 * exister (une descente de 1 bloc max est acceptée, pas le vide).
 	 */
-	private Rollout rollout(Level level, Vec3 start, double headingDeg, int steps, double margin, boolean comfort) {
+	private Rollout rollout(Level level, Vec3 start, double headingDeg, int steps, double stepLen, double margin, boolean comfort) {
 		double rad = Math.toRadians(headingDeg);
 		double dx = -Math.sin(rad);
 		double dz = Math.cos(rad);
@@ -155,8 +189,8 @@ public final class LocalNavigator {
 		int comfyCount = 0;
 		BlockPos blocked = null;
 		for (int i = 1; i <= steps; i++) {
-			double nx = x + dx * WALK;
-			double nz = z + dz * WALK;
+			double nx = x + dx * stepLen;
+			double nz = z + dz * stepLen;
 			double ny = y;
 			if (!Walkability.bodyFreeAt(level, nx, ny, nz, margin)) {
 				double rise = Walkability.riseAhead(level, new Vec3(x, y, z), dx, dz);
