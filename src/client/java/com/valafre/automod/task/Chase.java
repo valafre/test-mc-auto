@@ -19,7 +19,7 @@ final class Chase {
 	private boolean moving;
 
 	/** @param sight ligne de vue STABLE sur la cible (évaluée une fois par tick par l'appelant) */
-	void step(Framework f, String owner, Entity target, TargetInfo info, boolean sight, boolean controlLook, Vec3 combatPos) {
+	void step(Framework f, String owner, Entity target, TargetInfo info, boolean sight, boolean controlLook, boolean cameraLocked, Vec3 combatPos) {
 		ModConfig cfg = ModConfig.get();
 		// Destination : la position de combat choisie (voit la cible, à portée, praticable) et non la case de la cible elle-même.
 		Vec3 dest = combatPos != null ? combatPos : target.position();
@@ -27,12 +27,12 @@ final class Chase {
 		if (!sight) {
 			// Cible derrière un mur : la distance ne dit rien. On contourne (chemin A*) en regardant où l'on marche.
 			moving = true;
-			f.movement().moveTo(f.player(), owner, dest, combatPos != null ? COMBAT_POS_STOP : NO_SIGHT_STOP, controlLook);
+			f.movement().moveTo(f.player(), owner, dest, combatPos != null ? COMBAT_POS_STOP : NO_SIGHT_STOP, controlLook, cameraLocked);
 			return;
 		}
 		moving = moving ? info.distance() > cfg.approachDistance : info.distance() > cfg.approachDistance + RESUME_MARGIN;
 		if (moving) {
-			f.movement().moveTo(f.player(), owner, dest, stop, controlLook);
+			f.movement().moveTo(f.player(), owner, dest, stop, controlLook, cameraLocked);
 		} else {
 			f.movement().reset();
 		}

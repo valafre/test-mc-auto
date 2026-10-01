@@ -121,7 +121,9 @@ public final class CombatTrace {
 		Vec3 motion = ps.player().getDeltaMovement();
 		double moveYaw = Math.hypot(motion.x, motion.z) > 0.01 ? Math.toDegrees(Math.atan2(-motion.x, motion.z)) : Double.NaN;
 		String type = String.valueOf(EntityType.getKey(t.getType()));
-		String line = String.format(Locale.ROOT,
+		String head = String.format(Locale.ROOT, "TARGET=#%d LOOK=%s CAMERA_HEADING=%.1f | ", t.getId(),
+			appliedPoint == null ? "NONE" : applied, yaw);
+		String line = head + String.format(Locale.ROOT,
 			"TARGET %s #%d (module=%s task=%s%s) DISTANCE %.1f VISIBLE %s (stable=%s) | ANGLE→cible yaw %.1f | ROTATION PLAYER %.1f | ERREUR %.1f"
 				+ " | MOVEMENT VECTOR x=%.3f z=%.3f (cap %s, écart à la cible %s) | CAMÉRA: %s | écritures: %s%s | INTENTION: %s | MOUVEMENT: %s | TOUCHES: %s%s",
 			type, t.getId(), idOf(moduleTarget), idOf(taskTarget), mismatch ? " ≠ INCOHÉRENT" : " OK", dist,

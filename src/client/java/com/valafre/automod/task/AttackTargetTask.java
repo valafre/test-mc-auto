@@ -138,7 +138,7 @@ public final class AttackTargetTask extends Task {
 				}
 			} else {
 				dbgCombatPos = positioner.choose(f.player(), target);
-				chase.step(f, owner(), target, info, sight && !detour, !lookEnemy || detour, dbgCombatPos); // trop loin ou sans ligne de vue : on rejoint / contourne
+				chase.step(f, owner(), target, info, sight && !detour, !lookEnemy, lookEnemy, dbgCombatPos); // trop loin ou sans ligne de vue : on rejoint / contourne
 			}
 		}
 		// Le boss est tombé plus bas (rebord, plateforme) : on cesse de s'accroupir pour pouvoir le suivre dans le vide.

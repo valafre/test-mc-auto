@@ -36,7 +36,7 @@ public final class FollowTargetTask extends Task {
 		if (sight) { // sans ligne de vue, le mouvement oriente la caméra vers le chemin (une seule source de regard)
 			f.rotation().lookAt(f.humanizer().aim(target, f.player()), target.getBoundingBox(), "ENEMY");
 		}
-		chase.step(f, owner(), target, info, sight, !sight, null);
+		chase.step(f, owner(), target, info, sight, !sight, false, null);
 		return TaskStatus.RUNNING;
 	}
 }

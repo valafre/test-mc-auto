@@ -113,6 +113,26 @@ public final class Walkability {
 		return isInWorld(level, feet) && isSafeFluidAndBlock(level, feet) && isSafeFluidAndBlock(level, feet.above());
 	}
 
+	/** Comme {@link #segmentWalkable} mais renvoie la case du premier point bloqué (null si le tronçon est praticable). */
+	public static BlockPos segmentBlockedAt(Level level, Vec3 from, Vec3 to, double margin) {
+		double dx = to.x - from.x;
+		double dz = to.z - from.z;
+		double length = Math.sqrt(dx * dx + dz * dz);
+		int samples = Math.max(1, (int) Math.ceil(length / 0.25));
+		boolean stepped = Math.abs(to.y - from.y) > 0.6;
+		boolean slight = !stepped && Math.abs(to.y - from.y) > 0.05;
+		for (int i = 1; i <= samples; i++) {
+			double t = (double) i / samples;
+			double x = from.x + dx * t;
+			double z = from.z + dz * t;
+			double y = (stepped || slight) ? (t < 0.5 ? from.y : to.y) : from.y;
+			if (!bodyFreeAt(level, x, y, z, margin)) {
+				return BlockPos.containing(x, y + 0.05, z);
+			}
+		}
+		return null;
+	}
+
 	/** Un sol (non dangereux) est-il présent sous le point (x, z) quand les pieds sont à la hauteur y ? */
 	public static boolean supportedAt(Level level, double x, double y, double z) {
 		BlockPos below = BlockPos.containing(x, y - 0.05, z);

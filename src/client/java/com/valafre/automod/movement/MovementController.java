@@ -65,9 +65,6 @@ public final class MovementController {
 	private final LocalNavigator local = new LocalNavigator();
 	private boolean steerJump;
 	private boolean steerSprintOk;
-	private boolean steerUnsafe;
-	private int unsafeTicks;
-	private static final int UNSAFE_TICKS_BEFORE_REPLAN = 3;
 	private static final double PATH_END_RADIUS = 0.6;
 	private static final double LOOK_NEAR = 1.2;
 	private static final double LOOK_MIN = 0.5;
@@ -104,6 +101,16 @@ public final class MovementController {
 	 *                    (ex. suivre une cible en la regardant) et le déplacement se fait par strafe relatif au regard
 	 */
 	public MoveStatus moveTo(PlayerState state, String owner, Vec3 dest, double stopDistance, boolean controlLook) {
+		return moveTo(state, owner, dest, stopDistance, controlLook, false);
+	}
+
+	/**
+	 * @param cameraLocked true : la tâche de combat verrouille la caméra sur la cible (ENEMY). Le déplacement ne la reprend
+	 *                     JAMAIS (même si le point visé est à plus de 60° du regard) : il se déplace par avant / strafe / recul
+	 *                     relatifs à cette caméra. Direction du mouvement et direction de la caméra sont indépendantes.
+	 */
+	public MoveStatus moveTo(PlayerState state, String owner, Vec3 dest, double stopDistance, boolean controlLook,
+							 boolean cameraLocked) {
 		ModConfig cfg = ModConfig.get();
 		Vec3 pos = state.position();
 		long now = state.level().getGameTime();
@@ -114,6 +121,9 @@ public final class MovementController {
 			maneuverTicks = 0;
 		}
 		lastCallTime = now;
+		if (safeReplanCooldown > 0) {
+			safeReplanCooldown--;
+		}
 		double dxd = dest.x - pos.x;
 		double dzd = dest.z - pos.z;
 		double horizontal = Math.sqrt(dxd * dxd + dzd * dzd);
@@ -155,51 +165,57 @@ public final class MovementController {
 		}
 
 		validatePathAhead(state);
-		waypoint = safeWaypoint(state, waypoint);
-		// Navigation locale : trajectoires candidates simulées, la meilleure remplace le point visé (cap stable à 3,5 blocs).
+		// Le tronçon vers le point du chemin est-il réellement praticable ? (si non : nouveau chemin demandé ici-même)
+		boolean waypointValid = checkWaypointSegment(state, waypoint);
+		// Navigation locale : trajectoires candidates simulées ; son cap (sûr) remplace le point visé. Un cap REFUSÉ n'est
+		// jamais exécuté.
 		steerJump = false;
 		steerSprintOk = false;
-		steerUnsafe = false;
 		LocalNavigator.Steering steer = local.steer(state, waypoint);
+		String refusal = null;
+		Vec3 nudge = null;
 		if (steer != null) {
-			waypoint = steer.point();
-			steerJump = steer.jump();
-			steerSprintOk = steer.sprintOk();
-			steerUnsafe = !steer.safe();
-			if (steerUnsafe) {
-				if (++unsafeTicks >= UNSAFE_TICKS_BEFORE_REPLAN && steer.blockedCell() != null) {
-					paths.avoid(steer.blockedCell());
-					ticksSincePath = Integer.MAX_VALUE / 2;
-					ticksSinceLineCheck = Integer.MAX_VALUE / 2;
-					forbidLineTicks = 20;
-					lineClear = false;
-					unsafeTicks = 0;
-					Debug.log("Movement", () -> "Aucune trajectoire sûre vers le point, nouveau chemin");
-				}
+			if (steer.noSafeTrajectory()) {
+				refusal = "NO_SAFE_TRAJECTORY";
+				nudge = steer.nudgePoint();
 			} else {
-				unsafeTicks = 0;
+				waypoint = steer.point();
+				steerJump = steer.jump();
+				steerSprintOk = steer.sprintOk();
 			}
+		} else if (!waypointValid) {
+			refusal = "WAYPOINT_INVALID";
+			BlockPos cell = state.player().blockPosition();
+			Vec3 centre = new Vec3(cell.getX() + 0.5, pos.y, cell.getZ() + 0.5);
+			double cx = centre.x - pos.x;
+			double cz = centre.z - pos.z;
+			if (cx * cx + cz * cz > 0.0144 && Walkability.segmentWalkable(state.level(), pos, centre, 0.0, false)) {
+				nudge = centre; // petite correction sûre : se recentrer sur la case, d'où le nouveau chemin part dégagé
+			}
+		}
+		if (refusal != null) {
+			return refuseMove(state, owner, dest, waypoint, steer, refusal, nudge, waypointValid, cameraLocked);
 		}
 		boolean maneuvering = updateUnstuck(state, owner, waypoint, horizontal);
 
 		// Jamais de marche arrière / de côté prolongée : si le point à rejoindre est trop loin de l'axe du regard, on se tourne
 		// vers lui (le joueur marche en avant) au lieu de reculer en gardant les yeux sur la cible.
 		boolean requestedLook = controlLook;
-		if (!controlLook && Math.abs(RotationController.yawDelta(state.eyePosition(), waypoint, state.yaw())) > MAX_STRAFE_YAW) {
-			controlLook = true;
+		if (!controlLook && !cameraLocked
+			&& Math.abs(RotationController.yawDelta(state.eyePosition(), waypoint, state.yaw())) > MAX_STRAFE_YAW) {
+			controlLook = true; // seulement si personne ne verrouille la caméra sur la cible
 		}
 		if (Debug.enabled()) { // diagnostic : qui décide de la direction et de la caméra ?
 			final boolean forced = !requestedLook && controlLook;
-			final boolean asked = requestedLook;
 			final Vec3 wp = waypoint;
 			final LocalNavigator.Steering st = steer;
+			final boolean valid = waypointValid;
+			final boolean locked = cameraLocked;
 			com.valafre.automod.debug.CombatTrace.movementNote(String.format(java.util.Locale.ROOT,
-				"moveTo dest=(%.1f,%.1f,%.1f) %s waypoint=(%.1f,%.1f) yaw→waypoint=%.0f steerCap=%s sûr=%s caméra-par-mouvement=%s%s chemin=%d/%d",
-				dest.x, dest.y, dest.z, path.isEmpty() ? "ligne-droite" : "chemin", wp.x, wp.z,
-				RotationController.computeYaw(state.eyePosition(), wp),
-				st == null ? "—" : String.format(java.util.Locale.ROOT, "%.0f", st.headingDeg()),
-				st == null ? "—" : String.valueOf(st.safe()), controlLook, forced ? " (IMPOSÉ: waypoint à >60° du regard)" : asked ? " (demandé)" : "",
-				pathIndex, path.size()));
+				"moveTo dest=(%.1f,%.1f,%.1f) %s MOVEMENT_HEADING=%.0f SAFE=%s NO_SAFE_TRAJECTORY=false WAYPOINT_VALID=%s CAMERA_LOCKED=%s caméra-par-mouvement=%s%s chemin=%d/%d",
+				dest.x, dest.y, dest.z, path.isEmpty() ? "ligne-droite" : "chemin",
+				RotationController.computeYaw(state.eyePosition(), wp), st == null ? "n/a" : "true", valid, locked,
+				controlLook, forced ? " (IMPOSÉ: waypoint à >60° du regard)" : "", pathIndex, path.size()));
 		}
 		if (controlLook) {
 			// Regard à hauteur des yeux pour garder un pitch neutre pendant la marche.
@@ -225,17 +241,14 @@ public final class MovementController {
 	}
 
 	/**
-	 * Vérifie, AVANT de s'y engager, que le tronçon jusqu'au point visé est praticable avec la vraie boîte du joueur
-	 * (coins, passages étroits, plafond). Sinon : nouveau chemin immédiat sans ligne droite, et en attendant on se
-	 * recentre sur la case où l'on est, d'où le chemin calculé part sans frôler d'obstacle.
+	 * Vérifie, AVANT de s'y engager, que le tronçon jusqu'au point du chemin est praticable avec la vraie boîte du joueur
+	 * (coins, passages étroits, plafond). S'il ne l'est pas : un nouveau chemin est demandé tout de suite (en évitant la
+	 * case fautive) et la fonction renvoie false. L'appelant ne doit alors PAS marcher vers ce point.
 	 */
-	private Vec3 safeWaypoint(PlayerState state, Vec3 wp) {
-		if (safeReplanCooldown > 0) {
-			safeReplanCooldown--;
-		}
+	private boolean checkWaypointSegment(PlayerState state, Vec3 wp) {
 		Vec3 pos = state.position();
 		if (Math.abs(wp.y - pos.y) > 0.6 || !state.onGround()) {
-			return wp; // marches et chutes : gérées par stepAhead / le chemin
+			return true; // marches et chutes : gérées par stepAhead / le chemin
 		}
 		Vec3 end = wp;
 		double dx = wp.x - pos.x;
@@ -244,20 +257,70 @@ public final class MovementController {
 		if (len > SAFE_CHECK_LENGTH) { // inutile de valider plus loin que ce qu'on parcourra avant le prochain contrôle
 			end = new Vec3(pos.x + dx / len * SAFE_CHECK_LENGTH, wp.y, pos.z + dz / len * SAFE_CHECK_LENGTH);
 		}
-		if (Walkability.segmentWalkable(state.level(), pos, end, 0.0, false)) {
-			return wp;
+		BlockPos blocked = Walkability.segmentBlockedAt(state.level(), pos, end, 0.0);
+		if (blocked == null) {
+			return true;
 		}
-		// Tronçon non praticable : on recalcule le chemin (sans ligne droite) mais on garde le point visé, sans recentrage :
-		// viser le centre de la case faisait osciller le joueur autour de ce point (marche et caméra saccadées).
-		if (safeReplanCooldown <= 0) {
-			ticksSincePath = Integer.MAX_VALUE / 2;
-			ticksSinceLineCheck = Integer.MAX_VALUE / 2;
-			forbidLineTicks = 15;
-			lineClear = false;
-			safeReplanCooldown = SAFE_REPLAN_COOLDOWN_TICKS;
-			Debug.log("Movement", () -> "Tronçon non praticable, nouveau chemin");
+		requestReplan(blocked);
+		return false;
+	}
+
+	/** Demande un nouveau chemin global (sans ligne droite), en évitant {@code avoidCell} ; limité à un recalcul / 5 ticks. */
+	private void requestReplan(BlockPos avoidCell) {
+		if (safeReplanCooldown > 0) {
+			return;
 		}
-		return wp;
+		if (avoidCell != null) {
+			paths.avoid(avoidCell);
+		}
+		ticksSincePath = Integer.MAX_VALUE / 2;
+		ticksSinceLineCheck = Integer.MAX_VALUE / 2;
+		forbidLineTicks = 20;
+		lineClear = false;
+		safeReplanCooldown = SAFE_REPLAN_COOLDOWN_TICKS;
+		Debug.log("Movement", () -> "Trajectoire refusée, nouveau chemin demandé");
+	}
+
+	/**
+	 * Une trajectoire est REFUSÉE (aucun cap sûr, ou point du chemin non praticable) : on ne marche pas dessus. La cible et
+	 * la caméra restent comme la tâche de combat les a posées ; un nouveau chemin est demandé ; seule une petite correction
+	 * de position SÛRE (déjà validée, jamais vers l'obstacle) est exécutée, sinon le joueur reste sur place.
+	 */
+	private MoveStatus refuseMove(PlayerState state, String owner, Vec3 dest, Vec3 waypoint,
+								  LocalNavigator.Steering steer, String reason, Vec3 nudge, boolean waypointValid,
+								  boolean cameraLocked) {
+		requestReplan(steer != null ? steer.blockedCell() : null);
+		intent = false; // on n'essaie pas d'avancer : le détecteur de blocage rapide ne doit pas réagir à cet arrêt voulu
+		forwardOnly = false;
+		boolean nudging = false;
+		if (nudge != null) {
+			Vec3 pos = state.position();
+			double yawRad = Math.toRadians(state.yaw());
+			double dx = nudge.x - pos.x;
+			double dz = nudge.z - pos.z;
+			double len = Math.sqrt(dx * dx + dz * dz);
+			if (len > 1.0E-4) {
+				dx /= len;
+				dz /= len;
+				double fwd = dx * -Math.sin(yawRad) + dz * Math.cos(yawRad);
+				double side = dx * -Math.cos(yawRad) + dz * -Math.sin(yawRad);
+				input.request(owner, Key.FORWARD, fwd > KEY_ON);
+				input.request(owner, Key.BACK, fwd < -KEY_ON);
+				input.request(owner, Key.RIGHT, side > KEY_ON);
+				input.request(owner, Key.LEFT, side < -KEY_ON);
+				nudging = true;
+			}
+		}
+		lastStatus = "REFUSÉ (" + reason + ")" + (nudging ? " : petite correction sûre" : " : arrêt");
+		if (Debug.enabled()) {
+			final boolean noSafe = steer != null && steer.noSafeTrajectory();
+			final boolean nud = nudging;
+			com.valafre.automod.debug.CombatTrace.movementNote(String.format(java.util.Locale.ROOT,
+				"moveTo dest=(%.1f,%.1f,%.1f) MOVEMENT_HEADING=%s SAFE=false NO_SAFE_TRAJECTORY=%s WAYPOINT_VALID=%s CAMERA_LOCKED=%s REFUS=%s correction=%s chemin=%d/%d",
+				dest.x, dest.y, dest.z, nudge == null ? "aucun" : String.format(java.util.Locale.ROOT, "%.0f", RotationController.computeYaw(state.position(), nudge)),
+				noSafe, waypointValid, cameraLocked, reason, nud, pathIndex, path.size()));
+		}
+		return MoveStatus.MOVING;
 	}
 
 	/**
@@ -529,8 +592,8 @@ public final class MovementController {
 		if (Debug.enabled()) {
 			final boolean ok = safe;
 			com.valafre.automod.debug.CombatTrace.movementNote(String.format(java.util.Locale.ROOT,
-				"combatApproach dist=%.1f avant=%s gauche=%s droite=%s recul=%s sprint=%s saut=%s sûr=%s",
-				distance, fwdKey, leftKey, rightKey, backKey, sprint, doJump, ok));
+				"combatApproach dist=%.1f avant=%s gauche=%s droite=%s recul=%s sprint=%s saut=%s SAFE=%s NO_SAFE_TRAJECTORY=%s WAYPOINT_VALID=n/a",
+				distance, fwdKey, leftKey, rightKey, backKey, sprint, doJump, ok, !ok));
 		}
 		lastStatus = !safe ? "COMBAT (aucune direction sûre)" : "COMBAT (navigation" + (leftKey ? ", gauche" : rightKey ? ", droite" : "") + ")";
 		return safe;
@@ -663,7 +726,7 @@ public final class MovementController {
 			double angle = Math.toDegrees(Math.atan2(Math.abs(side), fwd));
 			boolean walk = forwardOn ? angle < FORWARD_ANGLE_OFF || (angle < 100 && len > 3.0)
 				: angle < FORWARD_ANGLE_ON;
-			forwardOn = walk && !braking && !steerUnsafe;
+			forwardOn = walk && !braking;
 			backOn = false;
 			leftOn = false;
 			rightOn = false;
@@ -679,12 +742,6 @@ public final class MovementController {
 		}
 		}
 
-		if (steerUnsafe) { // aucune direction sûre : on ne s'engage pas, le chemin est recalculé
-			forwardOn = false;
-			backOn = false;
-			leftOn = false;
-			rightOn = false;
-		}
 		input.request(owner, Key.FORWARD, forwardOn);
 		input.request(owner, Key.BACK, backOn);
 		input.request(owner, Key.LEFT, leftOn);
