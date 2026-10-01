@@ -28,6 +28,9 @@ public final class AttackTargetTask extends Task {
 
 	private static final int WALL_TICKS_BEFORE_DETOUR = 3;
 	private static final int KEEP_LOOK_TICKS = 3;
+	private static final double KEEP_LOOK_MAX_DISTANCE = 12.0;
+	private static final int STUCK_TICKS = 40;
+	private static final int UNSTICK_DURATION = 30;
 	private static final int DETOUR_TICKS = 25;
 
 	private final LivingEntity target;
@@ -39,6 +42,9 @@ public final class AttackTargetTask extends Task {
 	private int detourTicks;
 	private boolean followDown;
 	private int sightLostTicks;
+	private Vec3 stuckAnchor;
+	private int stuckTicks;
+	private int unstickTicks;
 
 	/** @param sneak true : reste accroupi pendant toute la tâche (combat contre le boss)
 	 *  @param holdPosition true : le joueur garde sa position (imposée par une mécanique), vise et frappe sans bouger */
@@ -68,11 +74,12 @@ public final class AttackTargetTask extends Task {
 		// Ligne de vue perdue depuis moins de 0,15 s : on garde les yeux sur la cible (elle reparaît souvent au coin) au lieu
 		// de basculer vers le chemin, ce qui faisait tourner la caméra de ~100° dans un sens puis dans l'autre.
 		sightLostTicks = sight ? 0 : sightLostTicks + 1;
-		boolean recentlySaw = !sight && sightLostTicks <= KEEP_LOOK_TICKS;
+		boolean recentlySaw = !sight && sightLostTicks <= KEEP_LOOK_TICKS && info.distance() < KEEP_LOOK_MAX_DISTANCE;
 		if (sight || holdPosition || recentlySaw) {
 			f.rotation().lookAt(aim, target.getBoundingBox(), "ENEMY");
 		}
 
+		boolean closeCombat = false;
 		if (!holdPosition) {
 			var player = f.player().player();
 			boolean pushing = player.horizontalCollision && player.getDeltaMovement().horizontalDistanceSqr() < 0.0025;
@@ -92,6 +99,7 @@ public final class AttackTargetTask extends Task {
 				detourTicks--;
 			}
 			boolean close = sight && !detour && info.distance() <= cfg.approachDistance + CLOSE_ZONE_MARGIN;
+			closeCombat = close;
 			if (close) {
 				// Au contact : on avance en continu vers la cible (pas d'arrêt pour frapper), sans balayer l'écran.
 				f.movement().combatMove(f.player(), owner(), info.distance(), CLOSE_BACK_DISTANCE, cfg.combatMinDistance, 0);
@@ -102,7 +110,26 @@ public final class AttackTargetTask extends Task {
 		// Le boss est tombé plus bas (rebord, plateforme) : on cesse de s'accroupir pour pouvoir le suivre dans le vide.
 		double below = f.player().player().getY() - target.getY();
 		followDown = below > 1.0 || (followDown && below > 0.3);
-		if (sneak && !followDown) {
+		// Garde-fou : immobile depuis 2 s alors qu'on devrait avancer (rebord pris en sneak, coin...) : on se débloque.
+		var pl = f.player().player();
+		if (stuckAnchor == null || pl.position().distanceToSqr(stuckAnchor) > 0.09) {
+			stuckAnchor = pl.position();
+			stuckTicks = 0;
+		} else if (!holdPosition && !closeCombat) {
+			stuckTicks++;
+		}
+		if (stuckTicks > STUCK_TICKS) {
+			unstickTicks = UNSTICK_DURATION;
+			stuckTicks = 0;
+		}
+		if (unstickTicks > 0) {
+			unstickTicks--;
+			if (unstickTicks % 10 == 5) {
+				f.input().request(owner(), Key.JUMP, true);
+			}
+		}
+		// Accroupi seulement quand on est engagé (au contact ou en position) : en chemin on doit pouvoir descendre d'un rebord.
+		if (sneak && !followDown && unstickTicks == 0 && (holdPosition || closeCombat)) {
 			f.input().request(owner(), Key.SNEAK, true);
 		}
 		f.items().equip(f.player(), cfg.weaponKeyword);
