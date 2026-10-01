@@ -20,7 +20,7 @@ public final class ModConfig {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger("automod");
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-	private static final int CURRENT_VERSION = 10;
+	private static final int CURRENT_VERSION = 11;
 	private static ModConfig instance = new ModConfig();
 
 	/** Sert à migrer les anciens fichiers de config dont les valeurs par défaut ont changé. */
@@ -171,12 +171,16 @@ public final class ModConfig {
 	public int mobAcquireTimeoutTicks = 200;
 	/** Enderman normal : abandonné si le joueur reste quasi immobile (moins de 0,5 bloc) pendant X ticks. */
 	public int stuckSkipTicks = 60;
+	/** Enderman normal : abandonné si la distance ne diminue pas d'au moins 0,5 bloc pendant X ticks (hors portée d'attaque). */
+	public int noProgressTicks = 40;
+	/** Idem quand l'Enderman est à plus de 2,5 blocs AU-DESSUS du joueur (perché, presque toujours inaccessible). */
+	public int noProgressElevatedTicks = 20;
 	/** Enderman normal : on vérifie toutes les X ticks s'il y en a un nettement plus proche que la cible poursuivie. */
 	public int retargetIntervalTicks = 20;
 	/** Il faut qu'il soit plus proche d'au moins cette distance (blocs) pour changer de cible (évite les allers-retours). */
 	public double retargetMarginBlocks = 1.0;
 	/** En dessous de cette distance (oeil -> hitbox) on recule légèrement pour garder la portée. */
-	public double combatMinDistance = 1.4;
+	public double combatMinDistance = 1.9;
 	public int pathMaxNodes = 1500;
 	public int pathRecomputeIntervalTicks = 10;
 	/** Durée maximale d'un déplacement vers une position avant abandon. */
@@ -274,6 +278,9 @@ public final class ModConfig {
 		if (c.configVersion < 10) { // bande de visée 45 % -> 60 % (40 % de marge en haut)
 			c.aimBandLowFraction = 0.45;
 			c.aimBandHighFraction = 0.60;
+		}
+		if (c.configVersion < 11) { // on ne colle plus la cible (la caméra balayait autour d'un mob à 0,5 bloc)
+			c.combatMinDistance = 1.9;
 		}
 		c.configVersion = CURRENT_VERSION;
 	}

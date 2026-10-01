@@ -24,7 +24,7 @@ public final class AttackTargetTask extends Task {
 	/** Au-delà de approachDistance + cette marge, on se contente de poursuivre (sans logique de distance fine). */
 	private static final double CLOSE_ZONE_MARGIN = 1.0;
 	/** Reculer seulement si on est vraiment collé dans la cible. */
-	private static final double CLOSE_BACK_DISTANCE = 0.8;
+	private static final double CLOSE_BACK_DISTANCE = 1.1;
 
 	private final LivingEntity target;
 	private final boolean holdPosition;

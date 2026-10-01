@@ -64,6 +64,8 @@ public final class VoidgloomModule extends AbstractModule {
 	private int engagedTicks = -1;    // ticks depuis le premier contact (portée + ligne de vue) ; -1 = pas encore au contact
 	private net.minecraft.world.phys.Vec3 stuckAnchor; // position de référence pour détecter un joueur bloqué
 	private int stuckTicks;
+	private double bestDistance = Double.MAX_VALUE;   // plus petite distance atteinte vers la cible (suivi de progression)
+	private int noProgressTicks;
 	private int acquiredTicks;         // ticks depuis l'acquisition de la cible
 	private int noLosTicks;            // ticks consécutifs sans ligne de vue sur la cible
 	private long clock;
@@ -128,6 +130,8 @@ public final class VoidgloomModule extends AbstractModule {
 		acquiredTicks = 0;
 		stuckAnchor = null;
 		stuckTicks = 0;
+		bestDistance = Double.MAX_VALUE;
+		noProgressTicks = 0;
 		targetIsBoss = false;
 		reactionTicks = 0;
 		bossCheckTimer = 0;
@@ -231,6 +235,8 @@ public final class VoidgloomModule extends AbstractModule {
 		acquiredTicks = 0;
 		stuckAnchor = null;
 		stuckTicks = 0;
+		bestDistance = Double.MAX_VALUE;
+		noProgressTicks = 0;
 			targetIsBoss = boss != null;
 			reactionTicks = transitionDelay(f, picked);
 			Debug.log("Voidgloom", () -> (targetIsBoss ? "Boss trouvé : " : "Enderman à farmer : ")
@@ -291,6 +297,8 @@ public final class VoidgloomModule extends AbstractModule {
 		acquiredTicks = 0;
 		stuckAnchor = null;
 		stuckTicks = 0;
+		bestDistance = Double.MAX_VALUE;
+		noProgressTicks = 0;
 		reactionTicks = 0;
 		fsm.transition(VoidgloomState.FOLLOWING_TARGET);
 		return true;
@@ -377,9 +385,19 @@ public final class VoidgloomModule extends AbstractModule {
 			stuckTicks++;
 		}
 		boolean stuck = stuckTicks > cfg.stuckSkipTicks;
+		// Progression : si on n'arrive pas à se rapprocher (ex. mob perché au-dessus), on change de cible rapidement.
+		double dist = TargetInfo.of(ps, target).distance();
+		if (dist <= cfg.attackDistance || dist < bestDistance - 0.5) {
+			bestDistance = dist;
+			noProgressTicks = 0;
+		} else {
+			noProgressTicks++;
+		}
+		boolean elevated = target.getY() - ps.position().y > 2.5;
+		boolean noProgress = noProgressTicks > (elevated ? cfg.noProgressElevatedTicks : cfg.noProgressTicks);
 		boolean killTimeout = engagedTicks > cfg.mobKillTimeoutTicks;
 		boolean acquireTimeout = acquiredTicks > cfg.mobAcquireTimeoutTicks;
-		if (!targetIsBoss && (killTimeout || acquireTimeout || stuck || noLosTicks > cfg.unreachableAfterTicks)) {
+		if (!targetIsBoss && (killTimeout || acquireTimeout || stuck || noProgress || noLosTicks > cfg.unreachableAfterTicks)) {
 			skipped.put(target.getId(), clock + cfg.skipTargetTicks);
 			Debug.log("Voidgloom", () -> "Enderman non tué à temps / inaccessible, on en prend un autre");
 			fsm.transition(VoidgloomState.TARGET_LOST);
@@ -461,6 +479,11 @@ public final class VoidgloomModule extends AbstractModule {
 	private static double approachCost(Framework f, PlayerState ps, net.minecraft.world.entity.Entity entity) {
 		float angle = Math.abs(RotationController.yawDelta(ps.eyePosition(), entity.position(), ps.yaw()));
 		double cost = ps.position().distanceTo(entity.position()) + 0.02 * angle;
+		// Un mob perché au-dessus ou en contrebas est souvent inaccessible : forte pénalité au-delà de 1,5 bloc de dénivelé.
+		double dy = Math.abs(entity.getY() - ps.position().y);
+		if (dy > 1.5) {
+			cost += 3.0 * (dy - 1.5);
+		}
 		if (!isOnScreen(f, ps, entity)) {
 			cost += OFF_SCREEN_PENALTY;
 		}
