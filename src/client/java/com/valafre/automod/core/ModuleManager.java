@@ -24,6 +24,29 @@ public final class ModuleManager {
 		return false;
 	}
 
+	/** Tous les modules enregistrés, dans l'ordre d'exécution (utilisé par le GUI pour construire ses listes). */
+	public List<? extends ModModule> all() {
+		return java.util.Collections.unmodifiableList(modules);
+	}
+
+	public ModModule get(String id) {
+		for (AbstractModule module : modules) {
+			if (module.id().equals(id)) {
+				return module;
+			}
+		}
+		return null;
+	}
+
+	public void setEnabled(Framework framework, String id, boolean enabled) {
+		for (AbstractModule module : modules) {
+			if (module.id().equals(id)) {
+				module.setEnabled(framework, enabled);
+				return;
+			}
+		}
+	}
+
 	public boolean isEnabled(String id) {
 		for (AbstractModule module : modules) {
 			if (module.id().equals(id)) {

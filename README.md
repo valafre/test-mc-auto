@@ -17,7 +17,8 @@ JAVA_HOME=<jdk25> ./gradlew build     # jar dans build/libs/
 ```
 
 ## Touches (catégorie « AutoMod »)
-- `INSERT` : ouvre le menu de réglage (modules, options, distances)
+- `INSERT` : ouvre le GUI SkyAssist (Accueil, Modules, Paramètres, Profils, À propos) ; touche modifiable dans Paramètres > Raccourcis
+- `H` : affiche / masque le HUD en jeu (modifiable) ; l'éditeur visuel du HUD est dans Paramètres > HUD en jeu
 - Toggle Voidgloom : bouton du menu (touche optionnelle, non assignée par défaut)
 - `I` : écrit dans le chat et copie dans le presse-papiers le bloc/l'entité visé(e)
 - `END` : arrêt d'urgence (stopAll + désactive tous les modules)

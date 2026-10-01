@@ -32,6 +32,20 @@ public final class ModConfig {
 	public boolean debugMode = false;
 	/** Affichage en jeu : une ligne courte ; le détail (tâche, touches, survie) n'apparaît qu'en mode debug. */
 	public boolean hudEnabled = true;
+	/** Style du HUD : 0 = liste, 1 = anneau (PV de la cible). */
+	public int hudStyle = 0;
+	/** Position du HUD : fraction (0..1) de l'espace libre de l'écran, donc valable à toute résolution. */
+	public float hudPosX = 0.01f;
+	public float hudPosY = 0.35f;
+	public float hudScale = 1.0f;
+	public float hudOpacity = 0.92f;
+	/** Lignes du HUD masquées (clés séparées par des virgules). */
+	public String hudHiddenRows = "";
+	/** Panneau des raccourcis clavier affiché en jeu. */
+	public boolean hudShowShortcuts = false;
+	/** Interface : préréglage de couleur d'accent (0 = violet) et vitesse des animations (0 = aucune). */
+	public int guiAccentPreset = 0;
+	public float guiAnimSpeed = 1.0f;
 
 	// ========================================
 	// TARGETING
@@ -329,6 +343,38 @@ public final class ModConfig {
 			c.combatMinDistance = 1.9;
 		}
 		c.configVersion = CURRENT_VERSION;
+	}
+
+	// ========================================
+	// PROFILS (instantanés de la configuration)
+	// ========================================
+
+	/** Configuration actuelle en JSON (sert à enregistrer un profil). */
+	public static String toJson() {
+		return GSON.toJson(instance);
+	}
+
+	/** Remplace la configuration par celle du JSON ; les champs absents gardent leur valeur par défaut. */
+	public static boolean loadFromJson(String json) {
+		try {
+			ModConfig loaded = GSON.fromJson(json, ModConfig.class);
+			if (loaded == null) {
+				return false;
+			}
+			instance = loaded;
+			migrate();
+			save();
+			return true;
+		} catch (RuntimeException e) {
+			LOGGER.warn("Profil illisible", e);
+			return false;
+		}
+	}
+
+	public static void resetToDefaults() {
+		instance = new ModConfig();
+		migrate();
+		save();
 	}
 
 	public static void save() {

@@ -17,6 +17,21 @@ public interface ModModule {
 	/** Appelé chaque tick tant que le module est actif et que les conditions de sécurité sont réunies. */
 	void onTick(Framework framework);
 
+	/** Nom affiché dans le GUI. */
+	default String displayName() {
+		return id();
+	}
+
+	/** Courte description affichée dans la liste des modules. */
+	default String description() {
+		return "";
+	}
+
+	/** Données d'affichage du HUD (état, cible, PV...). */
+	default HudInfo hudInfo() {
+		return HudInfo.EMPTY;
+	}
+
 	/** Texte d'état affiché dans le menu. */
 	default String status() {
 		return "";

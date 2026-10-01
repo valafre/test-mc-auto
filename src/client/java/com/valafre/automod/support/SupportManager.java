@@ -28,6 +28,9 @@ public final class SupportManager {
 	private boolean orbSeen;
 	private String status = "-";
 	private String shortStatus = "-";
+	private float lastFraction = 1.0f;
+	private String orbState = "-";
+	private String wandState = "-";
 
 	// ========================================
 	// SURVIE
@@ -73,6 +76,9 @@ public final class SupportManager {
 			}
 		}
 
+		lastFraction = fraction;
+		orbState = !cfg.orbEnabled ? "désactivée" : !bossFight ? "inactive" : orbTicks < 0 ? "à poser" : orbSeen ? "active" : "posée";
+		wandState = !cfg.healEnabled ? "désactivée" : items.findHotbarSlot(ps, cfg.healWandKeyword) < 0 ? "absente" : "prête";
 		updateShortStatus(fraction, bossFight);
 		status = "PV " + Math.round(fraction * 100) + "% (seuil " + Math.round(cfg.healThresholdPercent) + "%)"
 			+ " | Wand: " + slotText(items.findHotbarSlot(ps, cfg.healWandKeyword))
@@ -149,6 +155,19 @@ public final class SupportManager {
 
 	public String status() {
 		return status;
+	}
+
+	/** PV du joueur entre 0 et 1 (dernière valeur lue). */
+	public float healthFraction() {
+		return lastFraction;
+	}
+
+	public String orbState() {
+		return orbState;
+	}
+
+	public String wandState() {
+		return wandState;
 	}
 
 	public String shortStatus() {

@@ -4,6 +4,7 @@ import com.valafre.automod.config.ModConfig;
 import com.valafre.automod.core.AbstractModule;
 import com.valafre.automod.core.Debug;
 import com.valafre.automod.core.Framework;
+import com.valafre.automod.core.HudInfo;
 import com.valafre.automod.core.PlayerState;
 import com.valafre.automod.core.StateMachine;
 import com.valafre.automod.core.TaskPriority;
@@ -51,6 +52,14 @@ public final class VoidgloomModule extends AbstractModule {
 	private int endermenSeen;
 	private int bossesSeen;
 	private int mobsSeen;
+	private int kills;
+	private long enabledAtMs;
+	private int hudRefreshTimer;
+	private String hudTargetName = "";
+	private String hudTier = "";
+	private double hudHpRatio = -1;
+	private double hudHp = -1;
+	private double hudMaxHp = -1;
 	private int foreignBosses;
 	private boolean targetIsBoss;       // false : Enderman normal farmé pour faire apparaître le boss
 	private int reactionTicks;          // délai de réaction humain avant d'agir sur une nouvelle cible
@@ -97,6 +106,71 @@ public final class VoidgloomModule extends AbstractModule {
 	}
 
 	@Override
+	public String displayName() {
+		return "Voidgloom";
+	}
+
+	@Override
+	public String description() {
+		return "Assistant pour le Slayer Voidgloom";
+	}
+
+	@Override
+	public HudInfo hudInfo() {
+		long uptime = isEnabled() ? net.minecraft.util.Util.getMillis() - enabledAtMs : 0;
+		return new HudInfo(readableState(), hudTargetName, hudTier, hudHpRatio, hudHp, hudMaxHp, kills, uptime);
+	}
+
+	/** État du combat en français, pour le HUD. */
+	private String readableState() {
+		if (!slayerOk) {
+			return "En attente";
+		}
+		return switch (fsm.current()) {
+			case IDLE, SLAYER_CHECK -> "Inactif";
+			case SEARCHING_TARGET, TARGET_LOST -> "Recherche";
+			case FOLLOWING_TARGET -> "Approche";
+			case ALIGNING -> "Visée";
+			case ATTACKING -> "Attaque";
+			case GROUND_MECHANIC_DETECTED, CHOOSING_POSITION, REPOSITIONING, POSITION_REACHED -> "Mécanique";
+			case STOPPING -> "Arrêt";
+		};
+	}
+
+	/** Met à jour les valeurs d'affichage de la cible (nom, PV, palier) : appelé de temps en temps, pas à chaque image. */
+	private void refreshHudInfo(Framework f) {
+		if (target == null) {
+			hudTargetName = "";
+			hudTier = "";
+			hudHpRatio = -1;
+			hudHp = -1;
+			hudMaxHp = -1;
+			return;
+		}
+		var info = f.entityInfo().resolve(f.player().level(), target);
+		hudTargetName = info.name();
+		hudHp = info.hasHealth() ? info.health() : -1;
+		hudMaxHp = info.hasHealth() ? info.maxHealth() : -1;
+		hudHpRatio = info.hasHealth() && info.maxHealth() > 0 ? info.health() / info.maxHealth() : -1;
+		hudTier = parseTier(info.name());
+	}
+
+	/** "Voidgloom Seraph IV" -> "T4" (chiffre romain final du nom) ; vide si absent. */
+	private static String parseTier(String name) {
+		java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\b(IV|V|I{1,3})$").matcher(name.trim());
+		if (!m.find()) {
+			return "";
+		}
+		return switch (m.group(1)) {
+			case "I" -> "T1";
+			case "II" -> "T2";
+			case "III" -> "T3";
+			case "IV" -> "T4";
+			default -> "T5";
+		};
+	}
+
+	@Override
 	public int getPriority() {
 		return MODULE_PRIORITY;
 	}
@@ -108,6 +182,8 @@ public final class VoidgloomModule extends AbstractModule {
 	@Override
 	public void onEnable(Framework f) {
 		resetState();
+		kills = 0;
+		enabledAtMs = net.minecraft.util.Util.getMillis();
 		Debug.log("Voidgloom", () -> "Module activé");
 	}
 
@@ -358,6 +434,13 @@ public final class VoidgloomModule extends AbstractModule {
 
 		double base = targetIsBoss ? cfg.targetSearchRange : Math.max(cfg.targetSearchRange, cfg.farmSearchRange);
 		double keep = base * cfg.targetKeepRangeFactor;
+		if (target != null && target.isDeadOrDying()) {
+			kills++;
+		}
+		if (hudRefreshTimer-- <= 0) { // valeurs d'affichage : 2 fois par seconde suffisent
+			hudRefreshTimer = 10;
+			refreshHudInfo(f);
+		}
 		if (!TargetSelector.isValid(target) || target.position().distanceToSqr(ps.position()) > keep * keep) {
 			Debug.log("Voidgloom", () -> "Cible perdue");
 			fsm.transition(VoidgloomState.TARGET_LOST);
