@@ -56,8 +56,12 @@ public final class MovementController {
 	// Déblocage rapide : fenêtre courte de progrès, escalade de manoeuvres, cases à éviter.
 	/** Au-delà de cet écart (degrés) entre le regard et le point visé, on tourne la caméra plutôt que de marcher de biais. */
 	private static final float MAX_STRAFE_YAW = 60.0f;
+	private static final double FORWARD_ANGLE_ON = 40.0;
+	private static final double FORWARD_ANGLE_OFF = 55.0;
+	private boolean forwardOnly;
 	private static final double PATH_END_RADIUS = 0.6;
 	private static final double LOOK_NEAR = 1.2;
+	private static final double LOOK_MIN = 0.5;
 	private static final int SAFE_REPLAN_COOLDOWN_TICKS = 10;
 	private int safeReplanCooldown;
 	private static final double SAFE_CHECK_LENGTH = 1.6;
@@ -156,6 +160,7 @@ public final class MovementController {
 				rotation.lookAt(new Vec3(lookTarget.x, state.eyePosition().y, lookTarget.z), null, "PATH");
 			}
 		}
+		forwardOnly = controlLook;
 		if (!maneuvering) {
 			applyKeys(state, owner, waypoint, horizontal, stopDistance, cfg);
 		}
@@ -226,7 +231,8 @@ public final class MovementController {
 				return new Vec3(n.getX() + 0.5, n.getY(), n.getZ() + 0.5);
 			}
 		}
-		return null;
+		// Rien de plus loin : on vise quand même le point s'il est assez loin pour que la direction soit stable.
+		return dx * dx + dz * dz >= LOOK_MIN * LOOK_MIN ? waypoint : null;
 	}
 
 	/** Le joueur est-il en train de se débloquer ? (les appelants relâchent alors le sneak, etc.) */
@@ -520,6 +526,17 @@ public final class MovementController {
 		double speed = state.horizontalSpeed();
 		boolean braking = speed > 0.04 && distToDest - speed * BRAKE_LOOKAHEAD_TICKS <= stopDistance;
 
+		if (forwardOnly) {
+			// La caméra suit le chemin : on marche comme un joueur, uniquement vers l'avant. Si le point est trop de côté on
+			// tourne d'abord (sur place s'il est proche), sans jamais courir en crabe ni à reculons pendant que l'écran tourne.
+			double angle = Math.toDegrees(Math.atan2(Math.abs(side), fwd));
+			boolean walk = forwardOn ? angle < FORWARD_ANGLE_OFF || (angle < 100 && len > 3.0)
+				: angle < FORWARD_ANGLE_ON;
+			forwardOn = walk && !braking;
+			backOn = false;
+			leftOn = false;
+			rightOn = false;
+		} else {
 		forwardOn = hysteresis(forwardOn, fwd) && !braking;
 		// Reculer : indispensable quand on regarde la cible mais que le chemin part dans l'autre sens (contournement d'un mur).
 		backOn = hysteresis(backOn, -fwd) && !braking;
@@ -528,6 +545,7 @@ public final class MovementController {
 		if (leftOn && rightOn) { // ne peut arriver qu'à la limite exacte des seuils
 			leftOn = false;
 			rightOn = false;
+		}
 		}
 
 		input.request(owner, Key.FORWARD, forwardOn);
