@@ -20,7 +20,7 @@ public final class ModConfig {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger("automod");
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-	private static final int CURRENT_VERSION = 14;
+	private static final int CURRENT_VERSION = 15;
 	private static ModConfig instance = new ModConfig();
 
 	/** Sert à migrer les anciens fichiers de config dont les valeurs par défaut ont changé. */
@@ -253,6 +253,42 @@ public final class ModConfig {
 	public int stuckWindowTicks = 20;
 
 	// ========================================
+	// NAVIGATION (planification globale + trajectoires locales prédictives)
+	// ========================================
+	/** Ticks entre deux réévaluations de la trajectoire locale (2 = 100 ms). Le cap reste conservé tant qu'il est viable. */
+	public int navReplanTicks = 2;
+	/** Distance (blocs) analysée devant le joueur par les trajectoires locales. */
+	public double navLocalHorizonBlocks = 4.5;
+	/** Distance (blocs) entre deux points de simulation d'une trajectoire. */
+	public double navSampleDistance = 0.25;
+	/** Marge de sécurité (blocs) de chaque côté du corps pendant la simulation. */
+	public double navSafetyMargin = 0.12;
+	/** Distance minimale (blocs) qu'une trajectoire doit pouvoir parcourir sans obstacle pour être jugée sûre. */
+	public double navMinSafeDistance = 1.4;
+	/** Dénivelé maximal (blocs) franchissable en sautant dans le chemin global. */
+	public double navMaxClimb = 1.2;
+	/** Hauteur (blocs) qu'un saut franchit pendant la simulation locale. */
+	public double navJumpHeight = 1.15;
+	/** Poids de la marge avec les parois dans le score des trajectoires et le coût du chemin. */
+	public double navClearanceWeight = 1.5;
+	/** Poids de la progression vers la destination. */
+	public double navProgressWeight = 2.0;
+	/** Pénalité de changement de cap (hystérésis anti-oscillation). */
+	public double navTurnPenalty = 1.5;
+	/** Poids de l'orientation générale vers la destination. */
+	public double navTargetAlignWeight = 1.0;
+	/** Pénalité des culs-de-sac (une seule sortie = 1x, aucune = 2x). */
+	public double navDeadEndPenalty = 4.0;
+	/** Poids de la visibilité de la cible depuis la trajectoire (combat). */
+	public double navCombatVisibilityWeight = 2.0;
+	/** Simplifie le chemin A* (supprime les points intermédiaires quand le tronçon est praticable). */
+	public boolean navPathSmoothing = true;
+	/** Nombre de points du chemin regardés en avant pour viser le plus lointain directement franchissable. */
+	public int navLookAheadNodes = 8;
+	/** Durée (ms) du surcoût d'une case où le joueur a été refusé ou bloqué (expire toujours). */
+	public int navFailureMemoryMs = 3000;
+
+	// ========================================
 	// POSITIONNEMENT
 	// ========================================
 	/** Distance (blocs) des positions candidates autour de la mécanique. */
@@ -360,6 +396,10 @@ public final class ModConfig {
 		if (c.configVersion < 14) { // caméra plus rapide (trop lente et saccadée à 11 / 3)
 			c.camPeakSpeedDeg = 16.0f;
 			c.camMaxAccelDeg = 5.0f;
+		}
+		if (c.configVersion < 15) { // navigation hybride : réévaluation 2 ticks ; on ne change pas de cible pour un petit gain de distance
+			c.navReplanTicks = 2;
+			c.retargetMarginBlocks = 6.0;
 		}
 		c.configVersion = CURRENT_VERSION;
 	}

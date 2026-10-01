@@ -111,7 +111,7 @@ public final class CombatPositioner {
 					continue;
 				}
 				if (PathController.isDeadEnd(level, cell)) {
-					score -= 4.0; // renfoncement : on s'y coince et on ne peut plus se repositionner
+					score -= cfg.navDeadEndPenalty; // renfoncement : on s'y coince et on ne peut plus se repositionner
 				}
 				score -= 0.6 * solidSides(level, cell);
 				score -= 0.35 * Math.hypot(pos.x - player.x, pos.z - player.z);

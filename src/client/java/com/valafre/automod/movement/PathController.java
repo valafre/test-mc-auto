@@ -1,8 +1,8 @@
 package com.valafre.automod.movement;
 
+import com.valafre.automod.config.ModConfig;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
 import java.util.ArrayList;
@@ -13,77 +13,92 @@ import java.util.Map;
 import java.util.PriorityQueue;
 
 /**
- * Recherche de chemin locale (A*) sur la grille de blocs, bornée en nœuds explorés.
- * Sert à la fois à vérifier l'accessibilité d'une position et à guider le déplacement quand la ligne droite est bloquée.
- * Un nœud = case des pieds où le joueur peut se tenir ; pas de montée de 1 bloc, chute jusqu'à 3 blocs.
+ * Planification GLOBALE (A*) sur des {@link NavPoint} : chaque nœud est une cellule ET la hauteur réelle des pieds (formes de
+ * collision). Voisins : avant / arrière / côtés / diagonales (sans couper les coins), montée (marche ou saut avec
+ * atterrissage vérifié libre) et descente (chute bornée). Le coût intègre la marge avec les parois, les culs-de-sac
+ * (nombre de sorties) et une mémoire des échecs récents qui EXPIRE toujours. Le lissage est fait par {@link PathSmoother}.
  */
 public final class PathController {
 
-	/** Dénivelé maximal franchissable en sautant (le saut monte d'environ 1,25). */
-	private static final double MAX_RISE = 1.2;
 	/** Jusqu'à cette hauteur on monte en marchant, sans sauter. */
-	private static final double WALK_RISE = 0.6;
+	private static final double WALK_RISE = Walkability.STEP_HEIGHT;
 	private static final int[][] DIRECTIONS = {
 		{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}
 	};
 
 	private static final class Node {
-		final BlockPos pos;
+		final NavPoint pt;
 		Node parent;
 		double g;
 		double f;
 		boolean closed;
 
-		Node(BlockPos pos, Node parent, double g, double f) {
-			this.pos = pos;
+		Node(NavPoint pt, Node parent, double g, double f) {
+			this.pt = pt;
 			this.parent = parent;
 			this.g = g;
 			this.f = f;
 		}
 	}
 
-	/** Chemin trouvé : {@code complete} = atteint réellement le but ; sinon, meilleur chemin partiel (case explorée la plus proche du but). */
-	/** Cases à éviter (où le joueur s'est bloqué) : fort surcoût, jamais interdites pour ne pas rendre le chemin impossible. */
-	private final java.util.Set<BlockPos> avoid = new java.util.HashSet<>();
+	/** Cases où le joueur a été refusé / bloqué récemment -> instant d'expiration (ms). Surcoût temporaire, jamais une interdiction. */
+	private final Map<BlockPos, Long> failures = new HashMap<>();
 
+	/** Mémorise un échec sur {@code pos} : surcoût pendant {@code navFailureMemoryMs}, puis oubli. */
 	public void avoid(BlockPos pos) {
-		if (avoid.size() > 64) {
-			avoid.clear();
+		if (failures.size() > 96) {
+			prune();
 		}
-		avoid.add(pos.immutable());
+		failures.put(pos.immutable(), System.currentTimeMillis() + ModConfig.get().navFailureMemoryMs);
 	}
 
+	/** Oublie les échecs expirés (les autres restent : l'expiration seule les efface). */
 	public void clearAvoid() {
-		avoid.clear();
+		prune();
 	}
 
-	public record PathResult(List<BlockPos> path, boolean complete) {
+	private void prune() {
+		long now = System.currentTimeMillis();
+		failures.values().removeIf(t -> t < now);
+	}
+
+	private boolean recentlyFailed(BlockPos pos) {
+		if (failures.isEmpty()) {
+			return false;
+		}
+		Long t = failures.get(pos);
+		return t != null && t >= System.currentTimeMillis();
+	}
+
+	/** Chemin trouvé : {@code complete} = atteint réellement le but ; sinon, meilleur chemin partiel (point exploré le plus proche du but). */
+	public record PathResult(List<NavPoint> path, boolean complete) {
 		public static final PathResult NONE = new PathResult(List.of(), false);
 	}
 
-	/** @return le chemin COMPLET (départ exclu, but inclus), ou une liste vide si le but est inaccessible (utilisé pour valider une position). */
-	public List<BlockPos> findPath(Level level, BlockPos start, BlockPos goal, int maxNodes) {
+	/** @return le chemin COMPLET (départ exclu, but inclus), ou une liste vide si le but est inaccessible (validation d'une position). */
+	public List<NavPoint> findPath(Level level, BlockPos start, BlockPos goal, int maxNodes) {
 		if (!Walkability.canStandAt(level, goal)) {
 			return List.of();
 		}
-		PathResult result = search(level, start, goal, maxNodes);
+		NavPoint from = Walkability.navPointAt(level, start);
+		PathResult result = search(level, from != null ? from : NavPoint.of(start, start.getY(), false), goal, maxNodes);
 		return result.complete() ? result.path() : List.of();
 	}
 
 	/**
-	 * Comme {@link #findPath} mais tolérant : un but non praticable est ramené à la case praticable la plus proche, et si
-	 * aucun chemin complet n'existe dans la limite de nœuds, on renvoie le chemin vers la case explorée la plus proche du but
-	 * (le joueur se rapproche puis un nouveau calcul prend le relais).
+	 * Comme {@link #findPath} mais tolérant : un but non praticable est ramené à la cellule praticable la plus proche, et si
+	 * aucun chemin complet n'existe dans la limite de nœuds, on renvoie le chemin vers le point exploré le plus proche du but.
+	 * Le départ est la position RÉELLE des pieds.
 	 */
-	public PathResult findPathBestEffort(Level level, BlockPos start, BlockPos goal, int maxNodes) {
+	public PathResult findPathBestEffort(Level level, Vec3 feet, BlockPos goal, int maxNodes) {
 		BlockPos target = nearestStandable(level, goal, 3);
 		if (target == null) {
 			return PathResult.NONE;
 		}
-		return search(level, start, target, maxNodes);
+		return search(level, NavPoint.of(Walkability.cellOf(feet), feet.y, false), target, maxNodes);
 	}
 
-	/** Case praticable la plus proche de {@code pos} (rayon horizontal {@code radius}, +/-2 en hauteur), ou null. */
+	/** Cellule praticable la plus proche de {@code pos} (rayon horizontal {@code radius}, +/-2 en hauteur), ou null. */
 	public BlockPos nearestStandable(Level level, BlockPos pos, int radius) {
 		if (Walkability.canStandAt(level, pos)) {
 			return pos;
@@ -105,15 +120,16 @@ public final class PathController {
 		return best;
 	}
 
-	private PathResult search(Level level, BlockPos start, BlockPos goal, int maxNodes) {
+	private PathResult search(Level level, NavPoint start, BlockPos goal, int maxNodes) {
+		prune();
 		PriorityQueue<Node> open = new PriorityQueue<>((a, b) -> Double.compare(a.f, b.f));
 		Map<Long, Node> nodes = new HashMap<>();
-		Node first = new Node(start, null, 0, heuristic(start, goal));
+		Node first = new Node(start, null, 0, heuristic(start.cell(), goal));
 		open.add(first);
-		nodes.put(start.asLong(), first);
+		nodes.put(start.cell().asLong(), first);
 
 		Node closest = first;
-		double closestH = heuristic(start, goal);
+		double closestH = first.f;
 		int expanded = 0;
 		while (!open.isEmpty() && expanded < maxNodes) {
 			Node current = open.poll();
@@ -122,7 +138,7 @@ public final class PathController {
 			}
 			current.closed = true;
 			expanded++;
-			if (current.pos.equals(goal)) {
+			if (current.pt.cell().equals(goal)) {
 				return new PathResult(reconstruct(current), true);
 			}
 			double h = current.f - current.g;
@@ -134,37 +150,38 @@ public final class PathController {
 				expand(level, current, dir[0], dir[1], goal, open, nodes);
 			}
 		}
-		// But non atteint : chemin partiel vers la case la plus proche du but (s'il y a eu un vrai progrès).
+		// But non atteint : chemin partiel vers le point le plus proche du but (s'il y a eu un vrai progrès).
 		return closest == first ? PathResult.NONE : new PathResult(reconstruct(closest), false);
 	}
 
 	private void expand(Level level, Node current, int dx, int dz, BlockPos goal,
 						PriorityQueue<Node> open, Map<Long, Node> nodes) {
-		BlockPos base = current.pos;
+		ModConfig cfg = ModConfig.get();
+		NavPoint base = current.pt;
 		boolean diagonal = dx != 0 && dz != 0;
-		// Hauteur RÉELLE des pieds sur la case courante (pas son numéro de case).
-		double h = Walkability.standHeight(level, base);
-		double bx = base.getX() + 0.5;
-		double bz = base.getZ() + 0.5;
-		// Interdit de "couper" un coin : les deux colonnes orthogonales doivent laisser passer le corps à cette hauteur.
+		double h = base.feetY(); // hauteur RÉELLE des pieds, jamais le numéro de cellule
+		double bx = base.x();
+		double bz = base.z();
+		// Pas de coin coupé : les deux colonnes latérales doivent laisser passer le corps à cette hauteur.
 		if (diagonal && (!passable(level, bx + dx, h, bz) || !passable(level, bx, h, bz + dz))) {
 			return;
 		}
 		double sx = bx + dx;
 		double sz = bz + dz;
 		double cost = diagonal ? 1.414 : 1.0;
-		int maxDrop = com.valafre.automod.config.ModConfig.get().maxDropBlocks;
-		// Surface praticable de la colonne voisine, la plus proche de la hauteur actuelle (marche, demi-dalle, saut, chute).
-		double top = Walkability.feetHeightAt(level, sx, sz, h, MAX_RISE, maxDrop + 0.5, 0.0);
+		// Surface praticable de la colonne voisine la plus proche de la hauteur actuelle (marche, demi-dalle, saut, chute).
+		double top = Walkability.feetHeightAt(level, sx, sz, h, cfg.navMaxClimb, cfg.maxDropBlocks + 0.5, 0.0);
 		if (Double.isNaN(top)) {
 			return;
 		}
 		double rise = top - h;
+		boolean jump = false;
 		if (rise > WALK_RISE) {
-			// Il faudra sauter : la tête doit avoir la place de monter au-dessus de la case de départ.
+			// Saut : la tête doit avoir la place de monter, et l'atterrissage est libre (vérifié par feetHeightAt).
 			if (!Walkability.bodyFreeAt(level, bx, h + Math.min(rise, 1.0), bz, 0.0)) {
 				return;
 			}
+			jump = true;
 			cost += 0.5;
 		} else if (rise < -WALK_RISE) {
 			// Chute : le corps doit pouvoir descendre tout le long de la colonne voisine.
@@ -175,31 +192,29 @@ public final class PathController {
 			}
 			cost += 0.5 * Math.ceil(-rise);
 		}
-		BlockPos next = Walkability.cellOf(new Vec3(sx, top, sz));
-		// Le trajet réel entre les deux points doit être praticable (coins, plafonds de marche...). Un déplacement
-		// orthogonal à plat est sûr par construction ; on ne balaie que diagonales, montées et descentes.
+		NavPoint next = new NavPoint(Walkability.cellOf(new Vec3(sx, top, sz)), sx, top, sz, jump);
+		// Le trajet réel doit être praticable (coins, plafonds de marche...) : on balaie diagonales, montées et descentes.
 		if (diagonal || Math.abs(rise) > 0.05) {
-			Vec3 a = new Vec3(bx, h, bz);
-			Vec3 b = new Vec3(sx, top, sz);
-			if (!Walkability.segmentWalkable(level, a, b, 0.02, false)) {
-				com.valafre.automod.debug.StepTrace.astarReject(level, base, next, a, b); // diagnostic (debug uniquement)
+			if (!Walkability.segmentWalkable(level, base.vec(), next.vec(), 0.02, false)) {
+				com.valafre.automod.debug.StepTrace.astarReject(level, base.cell(), next.cell(), base.vec(), next.vec());
 				return;
 			}
 		}
-		cost += clearancePenalty(level, next);
-		if (!next.equals(goal)) {
-			cost += deadEndPenalty(level, next);
+		cost += Math.abs(rise) * 0.3; // coût vertical
+		cost += clearancePenalty(level, next) * cfg.navClearanceWeight / 1.5;
+		if (!next.cell().equals(goal)) {
+			cost += deadEndPenalty(level, next, cfg.navDeadEndPenalty);
 		}
-		if (!avoid.isEmpty() && avoid.contains(next)) {
+		if (recentlyFailed(next.cell())) {
 			cost += 8.0;
 		}
 		double g = current.g + cost;
-		Node known = nodes.get(next.asLong());
+		Node known = nodes.get(next.cell().asLong());
 		if (known != null && (known.closed || known.g <= g)) {
 			return;
 		}
-		Node node = new Node(next, current, g, g + heuristic(next, goal));
-		nodes.put(next.asLong(), node);
+		Node node = new Node(next, current, g, g + heuristic(next.cell(), goal));
+		nodes.put(next.cell().asLong(), node);
 		open.add(node);
 	}
 
@@ -209,43 +224,43 @@ public final class PathController {
 			|| !Double.isNaN(Walkability.feetHeightAt(level, x, z, h, WALK_RISE, WALK_RISE, 0.0));
 	}
 
-	/**
-	 * Possibilités de sortie : une case dont il ne reste qu'une issue (cul-de-sac, renfoncement, bout de couloir) est un
-	 * piège potentiel ; on l'évite fortement sauf si c'est le but. Test rapide : voisin orthogonal libre sur 2 blocs de
-	 * haut avec un sol dessous.
-	 */
-	/** Case sans véritable issue (une seule sortie ou aucune) : renfoncement, bout de couloir. */
-	public static boolean isDeadEnd(Level level, BlockPos pos) {
-		return deadEndPenalty(level, pos) > 0;
-	}
-
-	private static double deadEndPenalty(Level level, BlockPos pos) {
-		double h = Walkability.standHeight(level, pos);
+	/** Nombre de sorties d'un point (avancer à plat, monter ou descendre dans une des 4 directions). */
+	private static int exits(Level level, double x, double z, double h) {
 		int exits = 0;
 		for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.Plane.HORIZONTAL) {
-			double x = pos.getX() + 0.5 + dir.getStepX();
-			double z = pos.getZ() + 0.5 + dir.getStepZ();
-			// Sortie : on peut avancer à plat, monter (marche / saut) ou descendre dans cette direction.
-			if (Walkability.bodyFreeAt(level, x, h, z, 0.0)
-				|| !Double.isNaN(Walkability.feetHeightAt(level, x, z, h, MAX_RISE, WALK_RISE, 0.0))) {
+			double sx = x + dir.getStepX();
+			double sz = z + dir.getStepZ();
+			if (Walkability.bodyFreeAt(level, sx, h, sz, 0.0)
+				|| !Double.isNaN(Walkability.feetHeightAt(level, sx, sz, h, ModConfig.get().navMaxClimb, WALK_RISE, 0.0))) {
 				exits++;
 			}
 		}
-		return exits <= 1 ? 4.0 : 0.0;
+		return exits;
+	}
+
+	/** Cellule sans véritable issue (une seule sortie ou aucune) : renfoncement, bout de couloir. */
+	public static boolean isDeadEnd(Level level, BlockPos pos) {
+		return exits(level, pos.getX() + 0.5, pos.getZ() + 0.5, Walkability.standHeight(level, pos)) <= 1;
+	}
+
+	/** 0 sortie = très mauvais, 1 sortie = pénalisé, 2+ = normal. */
+	private static double deadEndPenalty(Level level, NavPoint p, double weight) {
+		int e = exits(level, p.x(), p.z(), p.feetY());
+		return e == 0 ? weight * 2.0 : e == 1 ? weight : 0.0;
 	}
 
 	/**
-	 * Marge de sécurité : surcoût pour les cases collées à un mur, dans un angle ou au bord du vide. Les chemins restent
+	 * Marge de sécurité : surcoût pour les points collés à un mur, dans un angle ou au bord du vide. Les chemins restent
 	 * ainsi à distance des obstacles quand il y a de la place, et un couloir étroit n'est pris que faute de mieux.
 	 * « Mur » = colonne où le corps ne passe pas à la hauteur réelle des pieds (une demi-dalle n'est pas un mur).
 	 */
-	private static double clearancePenalty(Level level, BlockPos pos) {
-		double h = Walkability.standHeight(level, pos);
+	private static double clearancePenalty(Level level, NavPoint p) {
+		double h = p.feetY();
 		double penalty = 0;
 		int solidSides = 0;
 		for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.Plane.HORIZONTAL) {
-			double x = pos.getX() + 0.5 + dir.getStepX();
-			double z = pos.getZ() + 0.5 + dir.getStepZ();
+			double x = p.x() + dir.getStepX();
+			double z = p.z() + dir.getStepZ();
 			if (!Walkability.bodyFreeAt(level, x, h, z, 0.0)) {
 				penalty += 0.5;
 				solidSides++;
@@ -257,7 +272,7 @@ public final class PathController {
 			penalty += 0.5; // angle ou couloir : on s'y coince plus facilement
 		}
 		for (int[] d : new int[][] {{1, 1}, {1, -1}, {-1, 1}, {-1, -1}}) {
-			if (!Walkability.bodyFreeAt(level, pos.getX() + 0.5 + d[0], h, pos.getZ() + 0.5 + d[1], 0.0)) {
+			if (!Walkability.bodyFreeAt(level, p.x() + d[0], h, p.z() + d[1], 0.0)) {
 				penalty += 0.2;
 			}
 		}
@@ -272,10 +287,10 @@ public final class PathController {
 		return (dx + dz) + (1.414 - 2) * Math.min(dx, dz) + dy;
 	}
 
-	private static List<BlockPos> reconstruct(Node end) {
-		List<BlockPos> path = new ArrayList<>();
+	private static List<NavPoint> reconstruct(Node end) {
+		List<NavPoint> path = new ArrayList<>();
 		for (Node n = end; n.parent != null; n = n.parent) {
-			path.add(n.pos);
+			path.add(n.pt);
 		}
 		Collections.reverse(path);
 		return path;
@@ -294,7 +309,7 @@ public final class PathController {
 			return false;
 		}
 		// Boîte réelle du joueur à chaque point (plus une marge de sécurité) : une ligne qui frôle un coin n'est pas "claire".
-		return Walkability.segmentWalkable(level, from, to, LINE_MARGIN, true);
+		return Walkability.segmentWalkable(level, from, to, Math.max(LINE_MARGIN, com.valafre.automod.config.ModConfig.get().navSafetyMargin), true);
 	}
 
 	private static final double LINE_MARGIN = 0.12;

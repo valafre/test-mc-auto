@@ -177,6 +177,9 @@ public final class AttackTargetTask extends Task {
 				lookEnemy, straight, info.distance(), dbgLag, dbgDetour, dbgWaitCam, holdPosition,
 				dbgCombatPos == null ? "aucune (cible directe)" : String.format(java.util.Locale.ROOT, "(%.1f,%.1f,%.1f)", dbgCombatPos.x, dbgCombatPos.y, dbgCombatPos.z)));
 		}
+		com.valafre.automod.debug.NavDebug.targetId = target.getId(); // HUD / trace [NAV]
+		com.valafre.automod.debug.NavDebug.camera = lookEnemy ? "ENEMY" : "PATH";
+		com.valafre.automod.debug.NavDebug.lastTick = f.player().level().getGameTime();
 		f.items().equip(f.player(), cfg.weaponKeyword);
 		if (!f.items().isBusy()) { // un objet utilitaire (Wand/Orb) est en main ce tick : on n'attaque pas avec
 			f.combat().tryAttack(f.player(), target);

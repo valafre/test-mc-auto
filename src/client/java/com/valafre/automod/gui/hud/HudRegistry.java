@@ -75,6 +75,26 @@ public final class HudRegistry {
 			var task = d.framework().tasks().current();
 			return new HudRow.Cell("Tâche", task == null ? "aucune" : task.name(), Theme.TEXT2);
 		}));
+		register(new HudRow("nav", "Navigation (debug)", true, d -> {
+			if (d.framework() == null || !Debug.enabled()) {
+				return null;
+			}
+			boolean safe = "SAFE".equals(com.valafre.automod.debug.NavDebug.local);
+			String heading = Double.isNaN(com.valafre.automod.debug.NavDebug.heading) ? "—"
+				: Math.round(com.valafre.automod.debug.NavDebug.heading) + "°";
+			String clear = Double.isNaN(com.valafre.automod.debug.NavDebug.clear) ? "—"
+				: String.format(java.util.Locale.ROOT, "%.1f", com.valafre.automod.debug.NavDebug.clear);
+			String ground = Double.isNaN(com.valafre.automod.debug.NavDebug.ground) ? "—"
+				: String.format(java.util.Locale.ROOT, "%.2f", com.valafre.automod.debug.NavDebug.ground);
+			String text = safe
+				? "Cible #" + com.valafre.automod.debug.NavDebug.targetId + " · chemin " + com.valafre.automod.debug.NavDebug.pathNodes
+					+ " · SAFE · cap " + heading + " · libre " + clear + " · sol " + ground
+					+ " · saut " + (com.valafre.automod.debug.NavDebug.jump ? "OUI" : "NON")
+					+ " · caméra " + com.valafre.automod.debug.NavDebug.camera + " · replan " + com.valafre.automod.debug.NavDebug.replanTicks + "t"
+				: com.valafre.automod.debug.NavDebug.local + " · raison " + com.valafre.automod.debug.NavDebug.reason
+					+ " · cap " + heading + " · libre " + clear;
+			return new HudRow.Cell("NAV", text, safe ? Theme.TEXT2 : Theme.WARNING);
+		}));
 		register(new HudRow("movement", "Mouvement (debug)", true, d -> {
 			if (d.framework() == null || !Debug.enabled()) {
 				return null;

@@ -137,7 +137,7 @@ public final class PositionController {
 			}
 		}
 		// 5. Accessible à pied (A* borné).
-		List<BlockPos> path = paths.findPath(level, playerPos, pos, cfg.pathMaxNodes);
+		List<NavPoint> path = paths.findPath(level, playerPos, pos, cfg.pathMaxNodes);
 		if (path.isEmpty() && !pos.equals(playerPos)) {
 			return reject(slot, pos, "inaccessible");
 		}

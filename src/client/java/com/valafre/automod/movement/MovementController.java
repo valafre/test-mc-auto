@@ -3,6 +3,7 @@ package com.valafre.automod.movement;
 import com.valafre.automod.config.ModConfig;
 import com.valafre.automod.core.Debug;
 import com.valafre.automod.core.PlayerState;
+import com.valafre.automod.debug.NavDebug;
 import com.valafre.automod.input.InputController;
 import com.valafre.automod.input.InputController.Key;
 import net.minecraft.core.BlockPos;
@@ -38,7 +39,7 @@ public final class MovementController {
 	private boolean leftOn;
 	private boolean rightOn;
 
-	private List<BlockPos> path = List.of();
+	private List<NavPoint> path = List.of();
 	private int pathIndex;
 	private BlockPos pathGoal;
 	private int ticksSincePath = Integer.MAX_VALUE / 2;
@@ -156,11 +157,12 @@ public final class MovementController {
 		}
 
 		Vec3 waypoint = resolveWaypoint(state, dest);
-		if (waypoint == null) {
-			// Aucun chemin A* (sol irrégulier, but non "standable"...) : on marche quand même droit vers la destination.
-			// Saut automatique sur collision et détection de blocage prennent le relais.
+		boolean pathless = waypoint == null;
+		if (pathless) {
+			// Aucun chemin A* : PAS de ligne droite aveugle. La destination ne sert que de guide à la navigation locale, qui
+			// ne choisit que des trajectoires sûres ; un nouveau chemin est redemandé à chaque réévaluation.
 			waypoint = dest;
-			lastStatus = "MOVING (marche directe, pas de chemin)";
+			lastStatus = "MOVING (pas de chemin : navigation locale)";
 		} else {
 			lastStatus = path.isEmpty() ? "MOVING (ligne droite)" : "MOVING (chemin " + (pathComplete ? "complet" : "partiel") + ", " + (path.size() - pathIndex) + " cases)";
 		}
@@ -168,10 +170,10 @@ public final class MovementController {
 		// Fin de chemin atteinte alors que la destination reste plus loin (cible inaccessible, bout de plateforme) : inutile de
 		// tourner sur place autour du dernier point ; on s'arrête et c'est au module de choisir autre chose.
 		if (!path.isEmpty() && pathIndex >= path.size() - 1 && waypoint != dest) {
-			BlockPos last = path.get(path.size() - 1);
-			double ex = last.getX() + 0.5 - pos.x;
-			double ez = last.getZ() + 0.5 - pos.z;
-			if (ex * ex + ez * ez < PATH_END_RADIUS * PATH_END_RADIUS && Math.abs(nodePoint(state.level(), last).y - pos.y) < 1.2) {
+			NavPoint last = path.get(path.size() - 1);
+			double ex = last.x() - pos.x;
+			double ez = last.z() - pos.z;
+			if (ex * ex + ez * ez < PATH_END_RADIUS * PATH_END_RADIUS && Math.abs(last.feetY() - pos.y) < 1.2) {
 				resetMotion();
 				lastStatus = "FIN DE CHEMIN (destination inaccessible)";
 				return MoveStatus.ARRIVED;
@@ -205,6 +207,9 @@ public final class MovementController {
 				steerJump = steer.jump();
 				steerSprintOk = steer.sprintOk();
 			}
+		} else if (pathless && state.onGround()) {
+			refusal = "NO_PATH"; // ni chemin ni cap local applicable : on ne fonce pas en ligne droite
+			requestReplan(null);
 		} else if (!waypointValid) {
 			refusal = "WAYPOINT_INVALID";
 			BlockPos cell = Walkability.cellOf(pos);
@@ -219,6 +224,7 @@ public final class MovementController {
 		dbgWaypointValid = waypointValid;
 		dbgSafe = refusal == null;
 		dbgNoSafe = steer != null && steer.noSafeTrajectory();
+		publishNav(state, steer, refusal, waypoint, globalWaypoint, controlLook, cameraLocked);
 		dbgRefusal = refusal == null ? "-" : refusal;
 		dbgExecutedPoint = refusal == null ? waypoint : nudge;
 		if (refusal != null) {
@@ -258,6 +264,37 @@ public final class MovementController {
 		}
 		intent = true;
 		return MoveStatus.MOVING;
+	}
+
+	/** Instantané pour le HUD / la trace [NAV] (lecture seule, aucune décision). */
+	private void publishNav(PlayerState state, LocalNavigator.Steering steer, String refusal, Vec3 executed, Vec3 global,
+							boolean controlLook, boolean cameraLocked) {
+		NavDebug.pathNodes = path.size() - pathIndex;
+		NavDebug.replanTicks = ModConfig.get().navReplanTicks;
+		NavDebug.camera = cameraLocked ? "ENEMY" : controlLook ? "PATH" : "ENEMY";
+		NavDebug.ground = state.position().y;
+		if (steer != null) {
+			NavDebug.local = steer.noSafeTrajectory() ? "NO SAFE TRAJECTORY" : "SAFE";
+			NavDebug.heading = steer.headingDeg();
+			NavDebug.clear = steer.clearDistance();
+			NavDebug.jump = steer.jump();
+			NavDebug.reason = steer.reason();
+			if (steer.noSafeTrajectory()) {
+				NavDebug.refuse(steer.reason(), steer.blockedCell(), steer.headingDeg(), steer.clearDistance());
+			}
+		} else {
+			NavDebug.local = refusal == null ? "SAFE" : "REFUS " + refusal;
+			NavDebug.heading = RotationController.computeYaw(state.position(), executed);
+			NavDebug.clear = Double.NaN;
+			NavDebug.jump = false;
+			NavDebug.reason = refusal == null ? "-" : refusal;
+			if (refusal != null) {
+				NavDebug.refuse(refusal, "—", NavDebug.heading, 0);
+			}
+		}
+		NavDebug.movement = refusal != null ? "REFUS" : controlLook ? "FORWARD" : "STRAFE";
+		NavDebug.trace(state.level().getGameTime(), global == null ? "—"
+			: String.format(java.util.Locale.ROOT, "(%.1f,%.2f,%.1f)", global.x, global.y, global.z));
 	}
 
 	/** Oublie destination, chemin et hystérésis. Les touches sont relâchées par l'InputController au prochain endTick. */
@@ -363,11 +400,11 @@ public final class MovementController {
 			return waypoint;
 		}
 		for (int j = Math.min(path.size() - 1, pathIndex + 4); j > pathIndex; j--) {
-			BlockPos n = path.get(j);
-			double nx = n.getX() + 0.5 - pos.x;
-			double nz = n.getZ() + 0.5 - pos.z;
+			NavPoint n = path.get(j);
+			double nx = n.x() - pos.x;
+			double nz = n.z() - pos.z;
 			if (nx * nx + nz * nz >= LOOK_NEAR * LOOK_NEAR) {
-				return nodePoint(level, n);
+				return n.vec();
 			}
 		}
 		// Rien de plus loin : on vise quand même le point s'il est assez loin pour que la direction soit stable.
@@ -382,10 +419,10 @@ public final class MovementController {
 		validateTicks = 0;
 		Vec3 prev = state.position();
 		for (int i = pathIndex; i < Math.min(path.size(), pathIndex + VALIDATE_NODES); i++) {
-			BlockPos n = path.get(i);
-			Vec3 c = nodePoint(state.level(), n);
+			NavPoint n = path.get(i);
+			Vec3 c = n.vec();
 			if (!Walkability.segmentWalkable(state.level(), prev, c, 0.0, false)) {
-				paths.avoid(n);
+				paths.avoid(n.cell());
 				ticksSincePath = Integer.MAX_VALUE / 2;
 				forbidLineTicks = 10;
 				Debug.log("Movement", () -> "Chemin devenu mauvais en avant, recalcul");
@@ -437,7 +474,7 @@ public final class MovementController {
 				}
 				if (unstuckLevel >= 2) {
 					paths.avoid(BlockPos.containing(waypoint.x, waypoint.y + 0.05, waypoint.z));
-					paths.avoid(state.player().blockPosition());
+					paths.avoid(Walkability.cellOf(pos));
 					maneuverSide = freeSide(state);
 				}
 				Debug.log("Movement", () -> "Déblocage niveau " + unstuckLevel);
@@ -639,8 +676,9 @@ public final class MovementController {
 	private Vec3 resolveWaypoint(PlayerState state, Vec3 dest) {
 		ModConfig cfg = ModConfig.get();
 		Vec3 pos = state.position();
+		int replan = Math.max(1, cfg.navReplanTicks);
 
-		if (++ticksSinceLineCheck >= 4) {
+		if (++ticksSinceLineCheck >= replan * 2) {
 			lineClear = paths.isClearLine(state.level(), pos, dest);
 			ticksSinceLineCheck = 0;
 		}
@@ -652,7 +690,7 @@ public final class MovementController {
 			return dest;
 		}
 
-		BlockPos goal = BlockPos.containing(dest.x, dest.y + 0.05, dest.z);
+		BlockPos goal = Walkability.cellOf(dest);
 		boolean goalMoved = pathGoal == null || pathGoal.distSqr(goal) > 4;
 		// Chemin partiel : recherche plus large mais moins souvent (limite le coût CPU).
 		int interval = pathComplete ? cfg.pathRecomputeIntervalTicks : cfg.pathRecomputeIntervalTicks * 2;
@@ -660,18 +698,19 @@ public final class MovementController {
 		boolean forced = ticksSincePath > Integer.MAX_VALUE / 4 || collisionTicks > 12 || pathIndex >= path.size();
 		boolean needsPath = goalMoved || ++ticksSincePath >= interval || forced;
 		if (needsPath) {
-			PathController.PathResult result =
-				paths.findPathBestEffort(state.level(), Walkability.cellOf(pos), goal, budget);
+			PathController.PathResult result = paths.findPathBestEffort(state.level(), pos, goal, budget);
+			List<NavPoint> fresh = cfg.navPathSmoothing
+				? PathSmoother.smooth(state.level(), pos, result.path(), cfg.navSafetyMargin) : result.path();
 			// Engagement dans un chemin : un recalcul périodique ne remplace pas le chemin en cours par un autre de longueur
-			// comparable (deux routes presque équivalentes autour d'un obstacle faisaient faire demi-tour au joueur et
-			// tourner la caméra de ~100° à chaque recalcul). On change seulement si c'est nettement plus court ou imposé.
+			// comparable (deux routes presque équivalentes faisaient faire demi-tour au joueur). On change seulement si c'est
+			// nettement plus court ou imposé (chemin invalide, but déplacé).
 			int remaining = path.size() - pathIndex;
-			boolean keepOld = !forced && !goalMoved && remaining > 2 && !result.path().isEmpty()
-				&& result.path().size() > remaining * 0.8 && result.complete() == pathComplete;
+			boolean keepOld = !forced && !goalMoved && remaining > 2 && !fresh.isEmpty()
+				&& fresh.size() > remaining * 0.8 && result.complete() == pathComplete;
 			if (keepOld) {
 				ticksSincePath = 0;
 			} else {
-				path = result.path();
+				path = fresh;
 				pathGeneration++;
 				pathComplete = result.complete();
 				pathIndex = 0;
@@ -683,22 +722,20 @@ public final class MovementController {
 		if (path.isEmpty()) {
 			return null;
 		}
-		while (pathIndex < path.size() - 1 && reached(state.level(), pos, path.get(pathIndex), WAYPOINT_REACHED + 0.6 * turnFactor(pos))) {
+		while (pathIndex < path.size() - 1 && reached(pos, path.get(pathIndex), WAYPOINT_REACHED + 0.6 * turnFactor(pos))) {
 			pathIndex++;
 		}
-		// Lissage : on saute directement au nœud le plus lointain (8 max) atteignable en ligne droite dégagée.
-		if (++ticksSinceLookahead >= 3) {
+		// Look-ahead : on vise le point le plus lointain (parmi les prochains) directement franchissable, pas le prochain nœud.
+		if (++ticksSinceLookahead >= replan) {
 			ticksSinceLookahead = 0;
-			for (int j = Math.min(path.size() - 1, pathIndex + 8); j > pathIndex; j--) {
-				BlockPos n = path.get(j);
-				if (paths.isClearLine(state.level(), pos, nodePoint(state.level(), n))) {
+			for (int j = Math.min(path.size() - 1, pathIndex + Math.max(1, cfg.navLookAheadNodes)); j > pathIndex; j--) {
+				if (paths.isClearLine(state.level(), pos, path.get(j).vec())) {
 					pathIndex = j;
 					break;
 				}
 			}
 		}
-		BlockPos node = path.get(pathIndex);
-		return nodePoint(state.level(), node);
+		return path.get(pathIndex).vec();
 	}
 
 	/**
@@ -709,24 +746,18 @@ public final class MovementController {
 		if (path.isEmpty() || pathIndex + 1 >= path.size()) {
 			return 0;
 		}
-		BlockPos n = path.get(pathIndex);
-		BlockPos m = path.get(pathIndex + 1);
-		double toNode = Math.atan2(n.getZ() + 0.5 - pos.z, n.getX() + 0.5 - pos.x);
-		double nextLeg = Math.atan2(m.getZ() - n.getZ(), m.getX() - n.getX());
+		NavPoint n = path.get(pathIndex);
+		NavPoint m = path.get(pathIndex + 1);
+		double toNode = Math.atan2(n.z() - pos.z, n.x() - pos.x);
+		double nextLeg = Math.atan2(m.z() - n.z(), m.x() - n.x());
 		double diff = Math.abs(Math.atan2(Math.sin(toNode - nextLeg), Math.cos(toNode - nextLeg)));
 		return Math.min(1.0, diff / (Math.PI / 2));
 	}
 
-	private static boolean reached(Level level, Vec3 pos, BlockPos node, double radius) {
-		Vec3 p = nodePoint(level, node);
-		double dx = p.x - pos.x;
-		double dz = p.z - pos.z;
-		return dx * dx + dz * dz < radius * radius && Math.abs(p.y - pos.y) < 1.2;
-	}
-
-	/** Point réel d'un nœud du chemin : centre de la case, à la HAUTEUR RÉELLE des pieds (jamais le numéro de case). */
-	static Vec3 nodePoint(Level level, BlockPos node) {
-		return new Vec3(node.getX() + 0.5, Walkability.standHeight(level, node), node.getZ() + 0.5);
+	private static boolean reached(Vec3 pos, NavPoint node, double radius) {
+		double dx = node.x() - pos.x;
+		double dz = node.z() - pos.z;
+		return dx * dx + dz * dz < radius * radius && Math.abs(node.feetY() - pos.y) < 1.2;
 	}
 
 	// ========================================

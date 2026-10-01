@@ -99,6 +99,21 @@ public final class Walkability {
 		return best;
 	}
 
+	/**
+	 * Surface réelle sur laquelle le joueur peut poser les pieds en (x, z) près de la hauteur {@code aroundY} : formes de
+	 * collision (VoxelShape) sous l'empreinte, corps 0,6 x 1,8 libre à cette hauteur, ni liquide ni danger. NaN si aucune.
+	 * Montée jusqu'à {@link #JUMP_HEIGHT}, descente jusqu'à la chute maximale configurée.
+	 */
+	public static double findStandableSurface(Level level, double x, double z, double aroundY) {
+		return feetHeightAt(level, x, z, aroundY, JUMP_HEIGHT, dropReach(), 0.0);
+	}
+
+	/** Point de navigation de la cellule {@code cell} (centre + hauteur réelle), ou null si on ne peut pas s'y tenir. */
+	public static NavPoint navPointAt(Level level, BlockPos cell) {
+		double y = surfaceY(level, cell);
+		return Double.isNaN(y) ? null : NavPoint.of(cell, y, false);
+	}
+
 	/** Hauteur réelle des pieds pour la case {@code cell} (sol praticable où le corps tient), ou NaN. */
 	public static double surfaceY(Level level, BlockPos cell) {
 		if (!isInWorld(level, cell)) {

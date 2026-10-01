@@ -55,3 +55,12 @@ Sélection de cible (VoidgloomModule / TargetSelector)
   -> RotationController -> InputController
 Filet de sécurité parallèle : détection de blocage (MovementController.updateUnstuck + garde-fous de la tâche).
 ```
+
+### Navigation hybride (géométrie réelle + A* + lissage + trajectoires locales)
+
+`Walkability` (géométrie commune, VoxelShape) → `PathController` (A* sur `NavPoint` = cellule + hauteur réelle des pieds, coût de
+marge / impasse / mémoire d'échecs expirante) → `PathSmoother` (suppression des points inutiles) → `MovementController`
+(look-ahead sur le point le plus lointain franchissable) → `LocalNavigator` (trajectoires candidates simulées, score
+progression + marge + continuité + mobilité future + stabilité du cap). Aucun cap non sûr n'est exécuté ; sans chemin on ne
+fonce plus en ligne droite (navigation locale ou refus). Réglages : onglet Mouvement > Navigation. Debug : lignes `[NAV]`,
+`[NAV REFUSE]`, `[NAV HEIGHT]` et ligne HUD « Navigation (debug) ».
