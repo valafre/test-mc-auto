@@ -28,6 +28,7 @@ public final class CombatPositioner {
 	private Vec3 chosen;
 	private Vec3 targetAtEval;
 	private int ticksSinceEval = 99;
+	private boolean reevaluatedThisCall;
 
 	public void reset() {
 		chosenCell = null;
@@ -39,17 +40,36 @@ public final class CombatPositioner {
 	/** @return la position de combat à rejoindre, ou null si aucune n'est viable (on retombe alors sur la position de la cible). */
 	public Vec3 choose(PlayerState state, Entity target) {
 		Level level = state.level();
+		reevaluatedThisCall = false;
 		boolean stale = chosen == null || ++ticksSinceEval >= REEVAL_TICKS
 			|| targetAtEval == null || targetAtEval.distanceToSqr(target.position()) > TARGET_MOVED_SQ;
 		if (!stale && !Walkability.canStandAt(level, chosenCell)) {
 			stale = true;
 		}
 		if (stale) {
+			reevaluatedThisCall = true;
 			evaluate(state, target);
 			ticksSinceEval = 0;
 			targetAtEval = target.position();
 		}
 		return chosen;
+	}
+
+	// Diagnostic (lecture seule)
+	public Vec3 debugChosen() {
+		return chosen;
+	}
+
+	public int debugAgeTicks() {
+		return ticksSinceEval;
+	}
+
+	public boolean debugReevaluated() {
+		return reevaluatedThisCall;
+	}
+
+	public Vec3 debugTargetAtEval() {
+		return targetAtEval;
 	}
 
 	private void evaluate(PlayerState state, Entity target) {

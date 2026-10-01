@@ -53,6 +53,26 @@ public final class MovementController {
 	private int stuckWindows;
 	private String lastStatus = "-";
 
+	// Diagnostic (lecture seule) : dernier état de navigation, pour le journal [Trace] / [TARGET MOVE].
+	/** Instantané de la navigation : point global, point exécuté, validité, sûreté, génération du chemin... */
+	public record DebugState(Vec3 globalWaypoint, Vec3 executedPoint, boolean waypointValid, boolean safe, boolean noSafe,
+							 String refusal, int pathGeneration, boolean lineClearCache, boolean pathComplete,
+							 int pathSize, int pathIndex, boolean reachableEstimate, long lastCallTick) {}
+
+	private Vec3 dbgGlobalWaypoint;
+	private Vec3 dbgExecutedPoint;
+	private boolean dbgWaypointValid = true;
+	private boolean dbgSafe = true;
+	private boolean dbgNoSafe;
+	private String dbgRefusal = "-";
+	private int pathGeneration;
+
+	public DebugState debugState() {
+		boolean reachable = lineClear || (pathComplete && !path.isEmpty());
+		return new DebugState(dbgGlobalWaypoint, dbgExecutedPoint, dbgWaypointValid, dbgSafe, dbgNoSafe, dbgRefusal,
+			pathGeneration, lineClear, pathComplete, path.size(), pathIndex, reachable, lastCallTime);
+	}
+
 	// Déblocage rapide : fenêtre courte de progrès, escalade de manoeuvres, cases à éviter.
 	/** Au-delà de cet écart (degrés) entre le regard et le point visé, on tourne la caméra plutôt que de marcher de biais. */
 	private static final float MAX_STRAFE_YAW = 60.0f;
@@ -164,6 +184,7 @@ public final class MovementController {
 			return MoveStatus.BLOCKED;
 		}
 
+		final Vec3 globalWaypoint = waypoint;
 		validatePathAhead(state);
 		// Le tronçon vers le point du chemin est-il réellement praticable ? (si non : nouveau chemin demandé ici-même)
 		boolean waypointValid = checkWaypointSegment(state, waypoint);
@@ -193,6 +214,12 @@ public final class MovementController {
 				nudge = centre; // petite correction sûre : se recentrer sur la case, d'où le nouveau chemin part dégagé
 			}
 		}
+		dbgGlobalWaypoint = globalWaypoint;
+		dbgWaypointValid = waypointValid;
+		dbgSafe = refusal == null;
+		dbgNoSafe = steer != null && steer.noSafeTrajectory();
+		dbgRefusal = refusal == null ? "-" : refusal;
+		dbgExecutedPoint = refusal == null ? waypoint : nudge;
 		if (refusal != null) {
 			return refuseMove(state, owner, dest, waypoint, steer, refusal, nudge, waypointValid, cameraLocked);
 		}
@@ -644,6 +671,7 @@ public final class MovementController {
 				ticksSincePath = 0;
 			} else {
 				path = result.path();
+				pathGeneration++;
 				pathComplete = result.complete();
 				pathIndex = 0;
 				pathGoal = goal;

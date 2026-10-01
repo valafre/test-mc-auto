@@ -53,6 +53,7 @@ public final class AttackTargetTask extends Task {
 	private boolean dbgWaitCam;
 	private double dbgLag;
 	private Vec3 dbgCombatPos;
+	private boolean dbgChoseCalled;
 	private Vec3 stuckAnchor;
 	private int stuckTicks;
 	private int unstickTicks;
@@ -103,6 +104,7 @@ public final class AttackTargetTask extends Task {
 
 		boolean closeCombat = false;
 		dbgCombatPos = null;
+		dbgChoseCalled = false;
 		dbgDetour = false;
 		dbgWaitCam = false;
 		if (!holdPosition) {
@@ -137,6 +139,7 @@ public final class AttackTargetTask extends Task {
 					detourTicks = DETOUR_TICKS;
 				}
 			} else {
+				dbgChoseCalled = true;
 				dbgCombatPos = positioner.choose(f.player(), target);
 				chase.step(f, owner(), target, info, sight && !detour, !lookEnemy, lookEnemy, dbgCombatPos); // trop loin ou sans ligne de vue : on rejoint / contourne
 			}
@@ -167,6 +170,8 @@ public final class AttackTargetTask extends Task {
 			f.input().request(owner(), Key.SNEAK, true);
 		}
 		if (com.valafre.automod.core.Debug.enabled()) { // diagnostic : l'intention de combat de ce tick
+			com.valafre.automod.debug.CombatTrace.combatPosition(positioner.debugChosen(), positioner.debugAgeTicks(),
+				positioner.debugReevaluated(), positioner.debugTargetAtEval(), dbgChoseCalled);
 			com.valafre.automod.debug.CombatTrace.taskTarget(target, sight, String.format(java.util.Locale.ROOT,
 				"lookEnemy=%s straight=%s dist=%.1f lagCaméra=%.0f détour=%s attendCaméra=%s hold=%s positionCombat=%s",
 				lookEnemy, straight, info.distance(), dbgLag, dbgDetour, dbgWaitCam, holdPosition,
