@@ -445,17 +445,27 @@ public final class MovementController {
 		// Chemin partiel : recherche plus large mais moins souvent (limite le coût CPU).
 		int interval = pathComplete ? cfg.pathRecomputeIntervalTicks : cfg.pathRecomputeIntervalTicks * 2;
 		int budget = pathComplete ? cfg.pathMaxNodes : cfg.pathMaxNodes * 2;
-		boolean needsPath = goalMoved || ++ticksSincePath >= interval
-			|| pathIndex >= path.size() || (collisionTicks > 12);
+		boolean forced = ticksSincePath > Integer.MAX_VALUE / 4 || collisionTicks > 12 || pathIndex >= path.size();
+		boolean needsPath = goalMoved || ++ticksSincePath >= interval || forced;
 		if (needsPath) {
 			PathController.PathResult result =
 				paths.findPathBestEffort(state.level(), state.player().blockPosition(), goal, budget);
-			path = result.path();
-			pathComplete = result.complete();
-			pathIndex = 0;
-			pathGoal = goal;
-			ticksSincePath = 0;
-			collisionTicks = 0;
+			// Engagement dans un chemin : un recalcul périodique ne remplace pas le chemin en cours par un autre de longueur
+			// comparable (deux routes presque équivalentes autour d'un obstacle faisaient faire demi-tour au joueur et
+			// tourner la caméra de ~100° à chaque recalcul). On change seulement si c'est nettement plus court ou imposé.
+			int remaining = path.size() - pathIndex;
+			boolean keepOld = !forced && !goalMoved && remaining > 2 && !result.path().isEmpty()
+				&& result.path().size() > remaining * 0.8 && result.complete() == pathComplete;
+			if (keepOld) {
+				ticksSincePath = 0;
+			} else {
+				path = result.path();
+				pathComplete = result.complete();
+				pathIndex = 0;
+				pathGoal = goal;
+				ticksSincePath = 0;
+				collisionTicks = 0;
+			}
 		}
 		if (path.isEmpty()) {
 			return null;

@@ -27,6 +27,7 @@ public final class AttackTargetTask extends Task {
 	private static final double CLOSE_BACK_DISTANCE = 1.1;
 
 	private static final int WALL_TICKS_BEFORE_DETOUR = 3;
+	private static final double CAMERA_LAG_STOP_DEG = 55.0;
 	private static final int KEEP_LOOK_TICKS = 3;
 	private static final double KEEP_LOOK_MAX_DISTANCE = 12.0;
 	private static final int STUCK_TICKS = 40;
@@ -42,6 +43,7 @@ public final class AttackTargetTask extends Task {
 	private int detourTicks;
 	private boolean followDown;
 	private int sightLostTicks;
+	private boolean lastLagStop;
 	private Vec3 stuckAnchor;
 	private int stuckTicks;
 	private int unstickTicks;
@@ -98,9 +100,16 @@ public final class AttackTargetTask extends Task {
 			if (detour) {
 				detourTicks--;
 			}
+			// Caméra en retard de plus de 55° sur la cible : on cesse d'avancer le temps de la rattraper, au lieu de courir
+			// pendant que l'écran tourne en rond (la cible tourne autour de nous plus vite que la caméra ne la suit).
+			double lag = Math.abs(com.valafre.automod.movement.RotationController.yawDelta(
+				f.player().eyePosition(), target.position(), f.player().yaw()));
+			boolean waitForCamera = sight && !detour && lag > CAMERA_LAG_STOP_DEG && info.distance() > 2.5;
 			boolean close = sight && !detour && info.distance() <= cfg.approachDistance + CLOSE_ZONE_MARGIN;
 			closeCombat = close;
-			if (close) {
+			if (waitForCamera) {
+				lastLagStop = true; // aucune touche de déplacement ce tick : la caméra rattrape
+			} else if (close) {
 				// Au contact : on avance en continu vers la cible (pas d'arrêt pour frapper), sans balayer l'écran.
 				f.movement().combatMove(f.player(), owner(), info.distance(), CLOSE_BACK_DISTANCE, cfg.combatMinDistance, 0);
 			} else {
