@@ -272,6 +272,8 @@ public final class VoidgloomModule extends AbstractModule {
 			case SEARCHING_TARGET -> searchTarget(f);
 			case TARGET_LOST -> {
 				stopActions(f);
+				logDropped(f, target, targetIsBoss, dropReason);
+				dropReason = "inconnue";
 				target = null;
 				targetIsBoss = false;
 				clearReposition();
@@ -317,10 +319,36 @@ public final class VoidgloomModule extends AbstractModule {
 		bestDistance = Double.MAX_VALUE;
 		noProgressTicks = 0;
 			targetIsBoss = boss != null;
+			logSelected(f, picked, targetIsBoss, targetIsBoss ? "boss prioritaire (propriétaire/niveau/nom validés)"
+				: "farm : coût d'approche le plus bas parmi " + result.mobs().size() + " Enderman détecté(s)");
 			reactionTicks = transitionDelay(f, picked);
 			Debug.log("Voidgloom", () -> (targetIsBoss ? "Boss trouvé : " : "Enderman à farmer : ")
 				+ f.entityInfo().resolve(ps.level(), picked));
 			fsm.transition(VoidgloomState.FOLLOWING_TARGET);
+		}
+	}
+
+	// ========================================
+	// DIAGNOSTIC DE CIBLE (journal uniquement, aucun effet sur les décisions)
+	// ========================================
+
+	private String dropReason = "inconnue";
+
+	private static String describeTarget(Framework f, EnderMan t, boolean boss) {
+		PlayerState ps = f.player();
+		return String.format(java.util.Locale.ROOT,
+			"id=%d type=%s uuid=%s pos=(%.1f, %.1f, %.1f) distance=%.1f hp=%.0f/%.0f valide=%s boss=%s",
+			t.getId(), net.minecraft.world.entity.EntityType.getKey(t.getType()), t.getUUID(), t.getX(), t.getY(), t.getZ(),
+			ps.position().distanceTo(t.position()), t.getHealth(), t.getMaxHealth(), TargetSelector.isValid(t), boss);
+	}
+
+	private void logSelected(Framework f, EnderMan t, boolean boss, String reason) {
+		Debug.log("Cible", () -> "SÉLECTION " + describeTarget(f, t, boss) + " | raison : " + reason);
+	}
+
+	private void logDropped(Framework f, EnderMan t, boolean boss, String reason) {
+		if (t != null) {
+			Debug.log("Cible", () -> "ABANDON " + describeTarget(f, t, boss) + " | raison : " + reason);
 		}
 	}
 
@@ -385,7 +413,10 @@ public final class VoidgloomModule extends AbstractModule {
 		}
 		Debug.log("Voidgloom", () -> "Enderman plus proche trouvé (" + Math.round(other) + " au lieu de " + Math.round(current) + ")");
 		stopActions(f);
+		logDropped(f, target, targetIsBoss, "retarget : un autre Enderman est plus proche de " + String.format(java.util.Locale.ROOT, "%.1f", current - other)
+			+ " blocs (marge " + cfg.retargetMarginBlocks + "), pas encore au contact");
 		target = nearest;
+		logSelected(f, nearest, false, "retarget : plus proche (" + Math.round(other) + " au lieu de " + Math.round(current) + ")");
 		noLosTicks = 0;
 		engagedTicks = -1;
 		engageStartRatio = -1;
@@ -423,7 +454,9 @@ public final class VoidgloomModule extends AbstractModule {
 		}
 		Debug.log("Voidgloom", () -> "Le boss est apparu, changement de cible");
 		stopActions(f);
+		logDropped(f, target, targetIsBoss, "le boss est apparu");
 		target = boss;
+		logSelected(f, boss, true, "boss apparu pendant le farm");
 		targetIsBoss = true;
 		reactionTicks = transitionDelay(f, boss);
 		fsm.transition(VoidgloomState.FOLLOWING_TARGET);
@@ -440,6 +473,7 @@ public final class VoidgloomModule extends AbstractModule {
 
 		double base = targetIsBoss ? cfg.targetSearchRange : Math.max(cfg.targetSearchRange, cfg.farmSearchRange);
 		double keep = base * cfg.targetKeepRangeFactor;
+		com.valafre.automod.debug.CombatTrace.moduleTarget(target);
 		if (target != null && target.isDeadOrDying()) {
 			kills++;
 		}
@@ -449,6 +483,8 @@ public final class VoidgloomModule extends AbstractModule {
 		}
 		if (!TargetSelector.isValid(target) || target.position().distanceToSqr(ps.position()) > keep * keep) {
 			Debug.log("Voidgloom", () -> "Cible perdue");
+			dropReason = !TargetSelector.isValid(target) ? "invalide (morte ou retirée du monde)"
+				: "hors de la portée de conservation (" + Math.round(Math.sqrt(target.position().distanceToSqr(ps.position()))) + " > " + Math.round(keep) + ")";
 			fsm.transition(VoidgloomState.TARGET_LOST);
 			return;
 		}
@@ -514,6 +550,8 @@ public final class VoidgloomModule extends AbstractModule {
 		}
 		boolean acquireTimeout = acquiredTicks > cfg.mobAcquireTimeoutTicks;
 		if (!targetIsBoss && (killTimeout || acquireTimeout || stuck || noProgress || noLosTicks > cfg.unreachableAfterTicks)) {
+			dropReason = "abandon d'un Enderman de farm : killTimeout=" + killTimeout + " acquireTimeout=" + acquireTimeout
+				+ " joueurBloqué=" + stuck + " sansProgrès=" + noProgress + " sansLigneDeVue=" + (noLosTicks > cfg.unreachableAfterTicks);
 			skipped.put(target.getId(), clock + cfg.skipTargetTicks);
 			Debug.log("Voidgloom", () -> "Enderman non tué à temps / inaccessible, on en prend un autre");
 			fsm.transition(VoidgloomState.TARGET_LOST);
@@ -721,6 +759,8 @@ public final class VoidgloomModule extends AbstractModule {
 		}
 		if (attackTask == null || attackTaskHold != wantHold || attackTaskTarget != target
 			|| !f.tasks().isRunning(AttackTargetTask.class)) {
+			Debug.log("Cible", () -> "Tâche de combat créée pour #" + target.getId() + " (cible changée=" + (attackTaskTarget != target)
+				+ ", position tenue=" + wantHold + ", tâche active=" + f.tasks().isRunning(AttackTargetTask.class) + ")");
 			attackTask = new AttackTargetTask(TaskPriority.COMBAT, target, wantHold, cfg.sneakOnBoss && targetIsBoss);
 			attackTaskHold = wantHold;
 			attackTaskTarget = target;

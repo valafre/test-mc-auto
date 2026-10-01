@@ -38,5 +38,6 @@ public final class TickManager {
 		framework.tasks().tick(framework);     // la tâche courante utilise mouvement / rotation / combat
 		framework.rotation().update(state);    // un seul pas de rotation, après toutes les demandes
 		framework.input().endTick(mc);         // application des touches (relâche celles non redemandées)
+		com.valafre.automod.debug.CombatTrace.emit(framework); // diagnostic (debug uniquement), aucun effet sur le comportement
 	}
 }

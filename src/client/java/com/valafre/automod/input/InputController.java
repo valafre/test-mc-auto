@@ -75,6 +75,9 @@ public final class InputController {
 	/** @return false si l'appelant n'est pas le propriétaire courant (demande ignorée). */
 	public boolean request(String requester, Key key, boolean down) {
 		if (requester == null || !requester.equals(owner)) {
+			if (com.valafre.automod.core.Debug.enabled()) {
+				com.valafre.automod.debug.CombatTrace.inputRejected(String.valueOf(requester), key.name());
+			}
 			return false;
 		}
 		intent[key.ordinal()] = down;

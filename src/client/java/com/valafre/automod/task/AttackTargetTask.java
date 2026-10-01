@@ -49,6 +49,10 @@ public final class AttackTargetTask extends Task {
 	private int sightLostTicks;
 	private boolean lastLagStop;
 	private boolean lookEnemy;
+	private boolean dbgDetour;
+	private boolean dbgWaitCam;
+	private double dbgLag;
+	private Vec3 dbgCombatPos;
 	private Vec3 stuckAnchor;
 	private int stuckTicks;
 	private int unstickTicks;
@@ -98,6 +102,9 @@ public final class AttackTargetTask extends Task {
 		}
 
 		boolean closeCombat = false;
+		dbgCombatPos = null;
+		dbgDetour = false;
+		dbgWaitCam = false;
 		if (!holdPosition) {
 			var player = f.player().player();
 			boolean pushing = player.horizontalCollision && player.getDeltaMovement().horizontalDistanceSqr() < 0.0025;
@@ -117,6 +124,9 @@ public final class AttackTargetTask extends Task {
 			boolean waitForCamera = lookEnemy && sight && !detour && lag > CAMERA_LAG_STOP_DEG && info.distance() > 2.5;
 			boolean close = sight && !detour && info.distance() <= cfg.approachDistance + CLOSE_ZONE_MARGIN;
 			closeCombat = close;
+			dbgDetour = detour;
+			dbgWaitCam = waitForCamera;
+			dbgLag = lag;
 			if (waitForCamera) {
 				lastLagStop = true; // aucune touche de déplacement ce tick : la caméra rattrape
 			} else if (close) {
@@ -127,7 +137,8 @@ public final class AttackTargetTask extends Task {
 					detourTicks = DETOUR_TICKS;
 				}
 			} else {
-				chase.step(f, owner(), target, info, sight && !detour, !lookEnemy || detour, positioner.choose(f.player(), target)); // trop loin ou sans ligne de vue : on rejoint / contourne
+				dbgCombatPos = positioner.choose(f.player(), target);
+				chase.step(f, owner(), target, info, sight && !detour, !lookEnemy || detour, dbgCombatPos); // trop loin ou sans ligne de vue : on rejoint / contourne
 			}
 		}
 		// Le boss est tombé plus bas (rebord, plateforme) : on cesse de s'accroupir pour pouvoir le suivre dans le vide.
@@ -154,6 +165,12 @@ public final class AttackTargetTask extends Task {
 		// Accroupi seulement quand on est engagé (au contact ou en position) : en chemin on doit pouvoir descendre d'un rebord.
 		if (sneak && !followDown && unstickTicks == 0 && !f.movement().isUnsticking() && (holdPosition || closeCombat)) {
 			f.input().request(owner(), Key.SNEAK, true);
+		}
+		if (com.valafre.automod.core.Debug.enabled()) { // diagnostic : l'intention de combat de ce tick
+			com.valafre.automod.debug.CombatTrace.taskTarget(target, sight, String.format(java.util.Locale.ROOT,
+				"lookEnemy=%s straight=%s dist=%.1f lagCaméra=%.0f détour=%s attendCaméra=%s hold=%s positionCombat=%s",
+				lookEnemy, straight, info.distance(), dbgLag, dbgDetour, dbgWaitCam, holdPosition,
+				dbgCombatPos == null ? "aucune (cible directe)" : String.format(java.util.Locale.ROOT, "(%.1f,%.1f,%.1f)", dbgCombatPos.x, dbgCombatPos.y, dbgCombatPos.z)));
 		}
 		f.items().equip(f.player(), cfg.weaponKeyword);
 		if (!f.items().isBusy()) { // un objet utilitaire (Wand/Orb) est en main ce tick : on n'attaque pas avec

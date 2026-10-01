@@ -80,6 +80,9 @@ public final class RotationController {
 
 	/** Regarder {@code point} (taille de cible inconnue). */
 	public void lookAt(Vec3 point) {
+		if (com.valafre.automod.core.Debug.enabled()) {
+			com.valafre.automod.debug.CombatTrace.rotationWrite("OTHER", callerName(), point, gaze != null);
+		}
 		gaze = new Gaze(point, null, "OTHER");
 	}
 
@@ -88,7 +91,29 @@ public final class RotationController {
 	 * @param source étiquette (ENEMY, PATH...) pour l'enregistreur de debug
 	 */
 	public void lookAt(Vec3 point, AABB box, String source) {
+		if (com.valafre.automod.core.Debug.enabled()) {
+			com.valafre.automod.debug.CombatTrace.rotationWrite(source, callerName(), point, gaze != null);
+		}
 		gaze = new Gaze(point, box, source);
+	}
+
+	/** Diagnostic : classe.méthode qui a appelé lookAt (debug uniquement). */
+	private static String callerName() {
+		return StackWalker.getInstance().walk(frames -> frames.skip(2).findFirst())
+			.map(fr -> fr.getClassName().substring(fr.getClassName().lastIndexOf('.') + 1) + "." + fr.getMethodName())
+			.orElse("?");
+	}
+
+	// Diagnostic : demande de regard réellement appliquée au dernier update.
+	private String appliedSource = "aucune";
+	private Vec3 appliedPoint;
+
+	public String debugAppliedSource() {
+		return appliedSource;
+	}
+
+	public Vec3 debugAppliedPoint() {
+		return appliedPoint;
 	}
 
 	/** Plus de demande : la caméra finit son mouvement en décélérant (pas d'arrêt sec). */
@@ -118,6 +143,8 @@ public final class RotationController {
 
 	public void update(PlayerState state) {
 		flushPending(state.player()); // le pas du tick précédent doit être complet avant de calculer l'écart restant
+		appliedSource = gaze == null ? "aucune" : gaze.source();
+		appliedPoint = gaze == null ? null : gaze.point();
 		ModConfig cfg = ModConfig.get();
 		LocalPlayer player = state.player();
 

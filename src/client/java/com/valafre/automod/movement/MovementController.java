@@ -184,8 +184,22 @@ public final class MovementController {
 
 		// Jamais de marche arrière / de côté prolongée : si le point à rejoindre est trop loin de l'axe du regard, on se tourne
 		// vers lui (le joueur marche en avant) au lieu de reculer en gardant les yeux sur la cible.
+		boolean requestedLook = controlLook;
 		if (!controlLook && Math.abs(RotationController.yawDelta(state.eyePosition(), waypoint, state.yaw())) > MAX_STRAFE_YAW) {
 			controlLook = true;
+		}
+		if (Debug.enabled()) { // diagnostic : qui décide de la direction et de la caméra ?
+			final boolean forced = !requestedLook && controlLook;
+			final boolean asked = requestedLook;
+			final Vec3 wp = waypoint;
+			final LocalNavigator.Steering st = steer;
+			com.valafre.automod.debug.CombatTrace.movementNote(String.format(java.util.Locale.ROOT,
+				"moveTo dest=(%.1f,%.1f,%.1f) %s waypoint=(%.1f,%.1f) yaw→waypoint=%.0f steerCap=%s sûr=%s caméra-par-mouvement=%s%s chemin=%d/%d",
+				dest.x, dest.y, dest.z, path.isEmpty() ? "ligne-droite" : "chemin", wp.x, wp.z,
+				RotationController.computeYaw(state.eyePosition(), wp),
+				st == null ? "—" : String.format(java.util.Locale.ROOT, "%.0f", st.headingDeg()),
+				st == null ? "—" : String.valueOf(st.safe()), controlLook, forced ? " (IMPOSÉ: waypoint à >60° du regard)" : asked ? " (demandé)" : "",
+				pathIndex, path.size()));
 		}
 		if (controlLook) {
 			// Regard à hauteur des yeux pour garder un pitch neutre pendant la marche.
@@ -512,6 +526,12 @@ public final class MovementController {
 			jumpCooldown = JUMP_COOLDOWN_TICKS;
 		}
 		input.request(owner, Key.JUMP, doJump);
+		if (Debug.enabled()) {
+			final boolean ok = safe;
+			com.valafre.automod.debug.CombatTrace.movementNote(String.format(java.util.Locale.ROOT,
+				"combatApproach dist=%.1f avant=%s gauche=%s droite=%s recul=%s sprint=%s saut=%s sûr=%s",
+				distance, fwdKey, leftKey, rightKey, backKey, sprint, doJump, ok));
+		}
 		lastStatus = !safe ? "COMBAT (aucune direction sûre)" : "COMBAT (navigation" + (leftKey ? ", gauche" : rightKey ? ", droite" : "") + ")";
 		return safe;
 	}
