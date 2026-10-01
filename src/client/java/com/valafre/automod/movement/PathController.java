@@ -43,6 +43,20 @@ public final class PathController {
 	}
 
 	/** Chemin trouvé : {@code complete} = atteint réellement le but ; sinon, meilleur chemin partiel (case explorée la plus proche du but). */
+	/** Cases à éviter (où le joueur s'est bloqué) : fort surcoût, jamais interdites pour ne pas rendre le chemin impossible. */
+	private final java.util.Set<BlockPos> avoid = new java.util.HashSet<>();
+
+	public void avoid(BlockPos pos) {
+		if (avoid.size() > 64) {
+			avoid.clear();
+		}
+		avoid.add(pos.immutable());
+	}
+
+	public void clearAvoid() {
+		avoid.clear();
+	}
+
 	public record PathResult(List<BlockPos> path, boolean complete) {
 		public static final PathResult NONE = new PathResult(List.of(), false);
 	}
@@ -172,6 +186,9 @@ public final class PathController {
 			return;
 		}
 		cost += wallPenalty(level, next);
+		if (!avoid.isEmpty() && avoid.contains(next)) {
+			cost += 8.0;
+		}
 		double g = current.g + cost;
 		Node known = nodes.get(next.asLong());
 		if (known != null && (known.closed || known.g <= g)) {

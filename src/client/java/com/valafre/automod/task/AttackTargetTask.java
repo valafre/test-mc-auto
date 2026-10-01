@@ -129,7 +129,7 @@ public final class AttackTargetTask extends Task {
 			}
 		}
 		// Accroupi seulement quand on est engagé (au contact ou en position) : en chemin on doit pouvoir descendre d'un rebord.
-		if (sneak && !followDown && unstickTicks == 0 && (holdPosition || closeCombat)) {
+		if (sneak && !followDown && unstickTicks == 0 && !f.movement().isUnsticking() && (holdPosition || closeCombat)) {
 			f.input().request(owner(), Key.SNEAK, true);
 		}
 		f.items().equip(f.player(), cfg.weaponKeyword);

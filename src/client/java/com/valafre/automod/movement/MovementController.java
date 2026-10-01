@@ -53,6 +53,19 @@ public final class MovementController {
 	private int stuckWindows;
 	private String lastStatus = "-";
 
+	// Déblocage rapide : fenêtre courte de progrès, escalade de manoeuvres, cases à éviter.
+	private static final int FAST_WINDOW_TICKS = 8;
+	private static final double FAST_MIN_PROGRESS = 0.2;
+	private static final int MANEUVER_TICKS = 10;
+	private Vec3 fastStart;
+	private int fastTicks;
+	private int unstuckLevel;
+	private int maneuverTicks;
+	private int maneuverSide = 1;
+	private int forbidLineTicks;
+	private boolean intent;
+	private long lastCallTime = Long.MIN_VALUE / 2;
+
 	public MovementController(InputController input, RotationController rotation, PathController paths) {
 		this.input = input;
 		this.rotation = rotation;
@@ -73,6 +86,14 @@ public final class MovementController {
 	public MoveStatus moveTo(PlayerState state, String owner, Vec3 dest, double stopDistance, boolean controlLook) {
 		ModConfig cfg = ModConfig.get();
 		Vec3 pos = state.position();
+		long now = state.level().getGameTime();
+		if (now - lastCallTime > 2) { // reprise après une pause : l'historique de progrès n'a plus de sens
+			fastStart = null;
+			intent = false;
+			unstuckLevel = 0;
+			maneuverTicks = 0;
+		}
+		lastCallTime = now;
 		double dxd = dest.x - pos.x;
 		double dzd = dest.z - pos.z;
 		double horizontal = Math.sqrt(dxd * dxd + dzd * dzd);
@@ -100,11 +121,16 @@ public final class MovementController {
 			return MoveStatus.BLOCKED;
 		}
 
+		boolean maneuvering = updateUnstuck(state, owner, waypoint, horizontal);
+
 		if (controlLook) {
 			// Regard à hauteur des yeux pour garder un pitch neutre pendant la marche.
 			rotation.lookAt(new Vec3(waypoint.x, state.eyePosition().y, waypoint.z), null, "PATH");
 		}
-		applyKeys(state, owner, waypoint, horizontal, stopDistance, cfg);
+		if (!maneuvering) {
+			applyKeys(state, owner, waypoint, horizontal, stopDistance, cfg);
+		}
+		intent = true;
 		return MoveStatus.MOVING;
 	}
 
@@ -116,7 +142,107 @@ public final class MovementController {
 		ticksSincePath = Integer.MAX_VALUE / 2;
 	}
 
+	/** Le joueur est-il en train de se débloquer ? (les appelants relâchent alors le sneak, etc.) */
+	public boolean isUnsticking() {
+		return unstuckLevel > 0 || maneuverTicks > 0;
+	}
+
+	/**
+	 * Déblocage rapide, en escalade : mesure le progrès sur 8 ticks ; sans progrès alors qu'on veut avancer on tente
+	 * 1) saut + nouveau chemin sans ligne droite, 2) pas de côté + saut du côté libre, 3) recul + case à éviter,
+	 * 4+) saut sprint en avant. Renvoie true tant qu'une manoeuvre pilote les touches.
+	 */
+	private boolean updateUnstuck(PlayerState state, String owner, Vec3 waypoint, double distToDest) {
+		Vec3 pos = state.position();
+		if (fastStart == null) {
+			fastStart = pos;
+			fastTicks = 0;
+		}
+		if (forbidLineTicks > 0) {
+			forbidLineTicks--;
+			lineClear = false;
+		}
+		if (++fastTicks >= FAST_WINDOW_TICKS && maneuverTicks == 0) {
+			double moved = pos.distanceTo(fastStart);
+			fastStart = pos;
+			fastTicks = 0;
+			if (moved >= 0.4) {
+				unstuckLevel = 0;
+				paths.clearAvoid();
+			} else if (moved < FAST_MIN_PROGRESS && intent && distToDest > 1.0) {
+				unstuckLevel++;
+				maneuverTicks = MANEUVER_TICKS;
+				ticksSincePath = Integer.MAX_VALUE / 2;
+				if (unstuckLevel >= 1) {
+					forbidLineTicks = 25;
+					lineClear = false;
+				}
+				if (unstuckLevel >= 2) {
+					paths.avoid(BlockPos.containing(waypoint.x, waypoint.y + 0.05, waypoint.z));
+					paths.avoid(state.player().blockPosition());
+					maneuverSide = freeSide(state);
+				}
+				Debug.log("Movement", () -> "Déblocage niveau " + unstuckLevel);
+			}
+		}
+		if (maneuverTicks <= 0) {
+			return false;
+		}
+		maneuverTicks--;
+		boolean ground = state.onGround();
+		switch (Math.min(unstuckLevel, 4)) {
+			case 1 -> {
+				input.request(owner, Key.FORWARD, true);
+				input.request(owner, Key.JUMP, ground);
+			}
+			case 2 -> {
+				input.request(owner, maneuverSide > 0 ? Key.RIGHT : Key.LEFT, true);
+				input.request(owner, Key.FORWARD, maneuverTicks < 5);
+				input.request(owner, Key.JUMP, ground && maneuverTicks % 5 == 0);
+			}
+			case 3 -> {
+				input.request(owner, Key.BACK, maneuverTicks > 4);
+				input.request(owner, maneuverSide > 0 ? Key.RIGHT : Key.LEFT, maneuverTicks > 4);
+				input.request(owner, Key.FORWARD, maneuverTicks <= 4);
+				input.request(owner, Key.JUMP, ground && maneuverTicks <= 4);
+			}
+			default -> {
+				maneuverSide = -maneuverSide;
+				input.request(owner, Key.FORWARD, true);
+				input.request(owner, Key.SPRINT, true);
+				input.request(owner, maneuverSide > 0 ? Key.RIGHT : Key.LEFT, maneuverTicks % 4 < 2);
+				input.request(owner, Key.JUMP, ground);
+			}
+		}
+		lastStatus = "DÉBLOCAGE (niveau " + unstuckLevel + ")";
+		if (maneuverTicks == 0) {
+			fastStart = pos;
+			fastTicks = 0;
+		}
+		return true;
+	}
+
+	/** Côté (1 = droite, -1 = gauche) où il y a de la place pour se décaler. */
+	private int freeSide(PlayerState state) {
+		double yawRad = Math.toRadians(state.yaw());
+		double rx = -Math.cos(yawRad);
+		double rz = -Math.sin(yawRad);
+		Vec3 pos = state.position();
+		for (int dir : new int[] {maneuverSide, -maneuverSide}) {
+			BlockPos probe = BlockPos.containing(pos.x + rx * dir * 0.9, pos.y + 0.05, pos.z + rz * dir * 0.9);
+			if (Walkability.canStandAt(state.level(), probe) || Walkability.canStandAt(state.level(), probe.below())) {
+				return dir;
+			}
+		}
+		return -maneuverSide;
+	}
+
 	private void resetMotion() {
+		fastStart = null;
+		unstuckLevel = 0;
+		maneuverTicks = 0;
+		intent = false;
+		paths.clearAvoid();
 		forwardOn = false;
 		backOn = false;
 		leftOn = false;
@@ -212,6 +338,9 @@ public final class MovementController {
 		if (++ticksSinceLineCheck >= 4) {
 			lineClear = paths.isClearLine(state.level(), pos, dest);
 			ticksSinceLineCheck = 0;
+		}
+		if (forbidLineTicks > 0) {
+			lineClear = false; // on vient de se bloquer sur cette "ligne droite" : on prend le chemin
 		}
 		if (lineClear) {
 			path = List.of();
