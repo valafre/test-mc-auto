@@ -26,8 +26,8 @@ public final class AttackTargetTask extends Task {
 	/** Reculer seulement si on est vraiment collé dans la cible. */
 	private static final double CLOSE_BACK_DISTANCE = 1.1;
 
-	private static final int WALL_TICKS_BEFORE_DETOUR = 8;
-	private static final int DETOUR_TICKS = 40;
+	private static final int WALL_TICKS_BEFORE_DETOUR = 3;
+	private static final int DETOUR_TICKS = 25;
 
 	private final LivingEntity target;
 	private final boolean holdPosition;
@@ -70,6 +70,12 @@ public final class AttackTargetTask extends Task {
 			var player = f.player().player();
 			boolean pushing = player.horizontalCollision && player.getDeltaMovement().horizontalDistanceSqr() < 0.0025;
 			wallTicks = pushing ? wallTicks + 1 : 0;
+			// Anticipation : un obstacle infranchissable juste devant dans la direction de la cible -> on contourne avant de le toucher.
+			Vec3 toTarget = target.position().subtract(player.position());
+			if (detourTicks == 0 && sight && player.onGround()
+				&& com.valafre.automod.movement.Walkability.riseAhead(player.level(), player.position(), toTarget.x, toTarget.z) > 1.1) {
+				detourTicks = DETOUR_TICKS;
+			}
 			if (wallTicks > WALL_TICKS_BEFORE_DETOUR) { // collé à un mur / une vitre / un rebord : on contourne par le chemin
 				detourTicks = DETOUR_TICKS;
 				wallTicks = 0;
