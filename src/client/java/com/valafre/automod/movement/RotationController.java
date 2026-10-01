@@ -33,7 +33,7 @@ public final class RotationController {
 	private static final double EYE_SMOOTHING = 0.3;
 	/** Cible (bord de hitbox) plus proche que ça en horizontal : l'angle visé n'a plus de sens, la caméra se fige. */
 	private static final double NEAR_ENEMY_RANGE = 0.9;
-	private static final double NEAR_POINT_FREE = 0.4;
+	private static final double NEAR_POINT_FREE = 0.8;
 	private static final double NEAR_POINT_RANGE = 1.0;
 
 	private record Gaze(Vec3 point, AABB box, String source) {}

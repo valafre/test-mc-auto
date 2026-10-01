@@ -56,6 +56,8 @@ public final class MovementController {
 	// Déblocage rapide : fenêtre courte de progrès, escalade de manoeuvres, cases à éviter.
 	/** Au-delà de cet écart (degrés) entre le regard et le point visé, on tourne la caméra plutôt que de marcher de biais. */
 	private static final float MAX_STRAFE_YAW = 60.0f;
+	private static final int SAFE_REPLAN_COOLDOWN_TICKS = 10;
+	private int safeReplanCooldown;
 	private static final double SAFE_CHECK_LENGTH = 1.6;
 	private static final int FAST_WINDOW_TICKS = 8;
 	private static final double FAST_MIN_PROGRESS = 0.2;
@@ -157,6 +159,9 @@ public final class MovementController {
 	 * recentre sur la case où l'on est, d'où le chemin calculé part sans frôler d'obstacle.
 	 */
 	private Vec3 safeWaypoint(PlayerState state, Vec3 wp) {
+		if (safeReplanCooldown > 0) {
+			safeReplanCooldown--;
+		}
 		Vec3 pos = state.position();
 		if (Math.abs(wp.y - pos.y) > 0.6 || !state.onGround()) {
 			return wp; // marches et chutes : gérées par stepAhead / le chemin
@@ -168,20 +173,18 @@ public final class MovementController {
 		if (len > SAFE_CHECK_LENGTH) { // inutile de valider plus loin que ce qu'on parcourra avant le prochain contrôle
 			end = new Vec3(pos.x + dx / len * SAFE_CHECK_LENGTH, wp.y, pos.z + dz / len * SAFE_CHECK_LENGTH);
 		}
-		if (Walkability.segmentWalkable(state.level(), pos, end, 0.02, false)) {
+		if (Walkability.segmentWalkable(state.level(), pos, end, 0.0, false)) {
 			return wp;
 		}
-		ticksSincePath = Integer.MAX_VALUE / 2;
-		ticksSinceLineCheck = Integer.MAX_VALUE / 2;
-		forbidLineTicks = 15;
-		lineClear = false;
-		BlockPos cell = state.player().blockPosition();
-		Vec3 centre = new Vec3(cell.getX() + 0.5, pos.y, cell.getZ() + 0.5);
-		double cx = centre.x - pos.x;
-		double cz = centre.z - pos.z;
-		if (cx * cx + cz * cz > 0.01 && Walkability.segmentWalkable(state.level(), pos, centre, 0.0, false)) {
-			Debug.log("Movement", () -> "Tronçon non praticable, recentrage sur la case");
-			return centre;
+		// Tronçon non praticable : on recalcule le chemin (sans ligne droite) mais on garde le point visé, sans recentrage :
+		// viser le centre de la case faisait osciller le joueur autour de ce point (marche et caméra saccadées).
+		if (safeReplanCooldown <= 0) {
+			ticksSincePath = Integer.MAX_VALUE / 2;
+			ticksSinceLineCheck = Integer.MAX_VALUE / 2;
+			forbidLineTicks = 15;
+			lineClear = false;
+			safeReplanCooldown = SAFE_REPLAN_COOLDOWN_TICKS;
+			Debug.log("Movement", () -> "Tronçon non praticable, nouveau chemin");
 		}
 		return wp;
 	}
