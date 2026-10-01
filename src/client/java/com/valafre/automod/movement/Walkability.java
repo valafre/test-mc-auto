@@ -98,6 +98,55 @@ public final class Walkability {
 		return Double.POSITIVE_INFINITY;
 	}
 
+	/**
+	 * Le corps du joueur (largeur 0,6 + {@code margin} de chaque côté, hauteur 1,8) peut-il se tenir EXACTEMENT en (x, y, z) ?
+	 * Contrairement à {@link #isBodyFree}, la boîte est testée à la position réelle (pas au centre de la case) : c'est ce
+	 * qui détecte les coins et les passages trop étroits que la grille de cases ne voit pas.
+	 */
+	public static boolean bodyFreeAt(Level level, double x, double y, double z, double margin) {
+		double hw = HALF_WIDTH + margin;
+		AABB box = new AABB(x - hw, y + 0.002, z - hw, x + hw, y + HEIGHT, z + hw);
+		if (!level.noCollision(box)) {
+			return false;
+		}
+		BlockPos feet = BlockPos.containing(x, y + 0.05, z);
+		return isInWorld(level, feet) && isSafeFluidAndBlock(level, feet) && isSafeFluidAndBlock(level, feet.above());
+	}
+
+	/** Un sol (non dangereux) est-il présent sous le point (x, z) quand les pieds sont à la hauteur y ? */
+	public static boolean supportedAt(Level level, double x, double y, double z) {
+		BlockPos below = BlockPos.containing(x, y - 0.05, z);
+		BlockState floor = level.getBlockState(below);
+		return !floor.getCollisionShape(level, below).isEmpty() && !isHazard(floor);
+	}
+
+	/**
+	 * Le déplacement de {@code from} à {@code to} est-il réellement praticable (balayage de la boîte du joueur tous les
+	 * 0,25 bloc) ? Une différence de hauteur de plus de 0,6 est traitée en deux phases (plat à la hauteur de départ, puis à
+	 * celle d'arrivée à mi-chemin) ; le sol n'est exigé que sur les tronçons de même hauteur.
+	 */
+	public static boolean segmentWalkable(Level level, Vec3 from, Vec3 to, double margin, boolean needSupport) {
+		double dx = to.x - from.x;
+		double dz = to.z - from.z;
+		double length = Math.sqrt(dx * dx + dz * dz);
+		int samples = Math.max(1, (int) Math.ceil(length / 0.25));
+		boolean stepped = Math.abs(to.y - from.y) > 0.6;
+		boolean slight = !stepped && Math.abs(to.y - from.y) > 0.05;
+		for (int i = 1; i <= samples; i++) {
+			double t = (double) i / samples;
+			double x = from.x + dx * t;
+			double z = from.z + dz * t;
+			double y = (stepped || slight) ? (t < 0.5 ? from.y : to.y) : from.y;
+			if (!bodyFreeAt(level, x, y, z, margin)) {
+				return false;
+			}
+			if (needSupport && !stepped && !supportedAt(level, x, y, z)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	public static boolean isInWorld(Level level, BlockPos pos) {
 		return !level.isOutsideBuildHeight(pos)
 			&& level.hasChunk(pos.getX() >> 4, pos.getZ() >> 4);

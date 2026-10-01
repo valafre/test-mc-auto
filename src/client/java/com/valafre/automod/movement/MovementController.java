@@ -54,6 +54,7 @@ public final class MovementController {
 	private String lastStatus = "-";
 
 	// Déblocage rapide : fenêtre courte de progrès, escalade de manoeuvres, cases à éviter.
+	private static final double SAFE_CHECK_LENGTH = 1.6;
 	private static final int FAST_WINDOW_TICKS = 8;
 	private static final double FAST_MIN_PROGRESS = 0.2;
 	private static final int MANEUVER_TICKS = 10;
@@ -121,6 +122,7 @@ public final class MovementController {
 			return MoveStatus.BLOCKED;
 		}
 
+		waypoint = safeWaypoint(state, waypoint);
 		boolean maneuvering = updateUnstuck(state, owner, waypoint, horizontal);
 
 		if (controlLook) {
@@ -140,6 +142,41 @@ public final class MovementController {
 		path = List.of();
 		pathGoal = null;
 		ticksSincePath = Integer.MAX_VALUE / 2;
+	}
+
+	/**
+	 * Vérifie, AVANT de s'y engager, que le tronçon jusqu'au point visé est praticable avec la vraie boîte du joueur
+	 * (coins, passages étroits, plafond). Sinon : nouveau chemin immédiat sans ligne droite, et en attendant on se
+	 * recentre sur la case où l'on est, d'où le chemin calculé part sans frôler d'obstacle.
+	 */
+	private Vec3 safeWaypoint(PlayerState state, Vec3 wp) {
+		Vec3 pos = state.position();
+		if (Math.abs(wp.y - pos.y) > 0.6 || !state.onGround()) {
+			return wp; // marches et chutes : gérées par stepAhead / le chemin
+		}
+		Vec3 end = wp;
+		double dx = wp.x - pos.x;
+		double dz = wp.z - pos.z;
+		double len = Math.sqrt(dx * dx + dz * dz);
+		if (len > SAFE_CHECK_LENGTH) { // inutile de valider plus loin que ce qu'on parcourra avant le prochain contrôle
+			end = new Vec3(pos.x + dx / len * SAFE_CHECK_LENGTH, wp.y, pos.z + dz / len * SAFE_CHECK_LENGTH);
+		}
+		if (Walkability.segmentWalkable(state.level(), pos, end, 0.02, false)) {
+			return wp;
+		}
+		ticksSincePath = Integer.MAX_VALUE / 2;
+		ticksSinceLineCheck = Integer.MAX_VALUE / 2;
+		forbidLineTicks = 15;
+		lineClear = false;
+		BlockPos cell = state.player().blockPosition();
+		Vec3 centre = new Vec3(cell.getX() + 0.5, pos.y, cell.getZ() + 0.5);
+		double cx = centre.x - pos.x;
+		double cz = centre.z - pos.z;
+		if (cx * cx + cz * cz > 0.01 && Walkability.segmentWalkable(state.level(), pos, centre, 0.0, false)) {
+			Debug.log("Movement", () -> "Tronçon non praticable, recentrage sur la case");
+			return centre;
+		}
+		return wp;
 	}
 
 	/** Le joueur est-il en train de se débloquer ? (les appelants relâchent alors le sneak, etc.) */
@@ -450,7 +487,8 @@ public final class MovementController {
 
 		// On lève le pied (pas de sprint) juste avant un virage serré du chemin, comme un joueur qui anticipe.
 		boolean sharpTurn = cfg.turnSlowdown && len < 2.5 && turnFactor(pos) > 0.55;
-		boolean sprint = cfg.useSprint && forwardOn && fwd > 0.9 && distToDest > cfg.slowDistance && !sharpTurn;
+		boolean sprint = cfg.useSprint && forwardOn && fwd > 0.9 && distToDest > cfg.slowDistance && !sharpTurn
+			&& sprintLaneClear(state, dx, dz, len);
 		input.request(owner, Key.SPRINT, sprint);
 
 		if (jumpCooldown > 0) {
@@ -460,13 +498,22 @@ public final class MovementController {
 		// Saut uniquement s'il y a une marche d'un bloc franchissable DEVANT (vers le point visé) ET qu'on est réellement
 		// bloqué par elle ou que le point est plus haut. Frotter un mur ou longer une paroi ne déclenche plus de saut.
 		boolean higher = waypoint.y > pos.y + 0.6;
+		// Préventif : une vraie marche devant se saute AVANT de la heurter (pas besoin de collision).
 		boolean jump = state.onGround() && jumpCooldown == 0 && forwardOn
-			&& (state.player().horizontalCollision || higher)
+			&& (state.player().horizontalCollision || higher || fwd > 0.5)
 			&& stepAhead(state, waypoint.x - pos.x, waypoint.z - pos.z);
 		if (jump) {
 			jumpCooldown = JUMP_COOLDOWN_TICKS;
 		}
 		input.request(owner, Key.JUMP, jump);
+	}
+
+	/** On ne sprinte que si les ~4 prochains blocs sont libres avec une marge : à pleine vitesse un coin ne pardonne pas. */
+	private boolean sprintLaneClear(PlayerState state, double dirX, double dirZ, double lenToWaypoint) {
+		Vec3 pos = state.position();
+		double reach = Math.min(4.0, Math.max(lenToWaypoint, 1.0));
+		Vec3 end = new Vec3(pos.x + dirX * reach, pos.y, pos.z + dirZ * reach);
+		return Walkability.segmentWalkable(state.level(), pos, end, 0.12, true);
 	}
 
 	/**

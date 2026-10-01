@@ -185,7 +185,16 @@ public final class PathController {
 		if (next == null) {
 			return;
 		}
-		cost += wallPenalty(level, next);
+		// Le trajet réel entre les deux cases doit être praticable (coins, plafonds de marche...). Un déplacement
+		// orthogonal à plat est sûr par construction ; on ne balaie que diagonales, montées et descentes.
+		if (diagonal || next.getY() != base.getY()) {
+			Vec3 a = new Vec3(base.getX() + 0.5, Walkability.standHeight(level, base), base.getZ() + 0.5);
+			Vec3 b = new Vec3(next.getX() + 0.5, Walkability.standHeight(level, next), next.getZ() + 0.5);
+			if (!Walkability.segmentWalkable(level, a, b, 0.02, false)) {
+				return;
+			}
+		}
+		cost += clearancePenalty(level, next);
 		if (!avoid.isEmpty() && avoid.contains(next)) {
 			cost += 8.0;
 		}
@@ -199,13 +208,29 @@ public final class PathController {
 		open.add(node);
 	}
 
-	/** Petit surcoût pour les cases collées à un mur : les chemins restent naturellement à distance des parois. */
-	private static double wallPenalty(Level level, BlockPos pos) {
+	/**
+	 * Marge de sécurité : surcoût pour les cases collées à un mur, dans un angle ou au bord du vide. Les chemins restent
+	 * ainsi à distance des obstacles quand il y a de la place, et un couloir étroit n'est pris que faute de mieux.
+	 */
+	private static double clearancePenalty(Level level, BlockPos pos) {
 		double penalty = 0;
+		int solidSides = 0;
 		for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.Plane.HORIZONTAL) {
 			BlockPos side = pos.relative(dir);
 			if (!level.getBlockState(side).getCollisionShape(level, side).isEmpty()) {
-				penalty += 0.3;
+				penalty += 0.5;
+				solidSides++;
+			} else if (level.getBlockState(side.below()).getCollisionShape(level, side.below()).isEmpty()) {
+				penalty += 0.4; // bord du vide : on évite de longer un précipice
+			}
+		}
+		if (solidSides >= 2) {
+			penalty += 0.5; // angle ou couloir : on s'y coince plus facilement
+		}
+		for (int[] d : new int[][] {{1, 1}, {1, -1}, {-1, 1}, {-1, -1}}) {
+			BlockPos corner = pos.offset(d[0], 0, d[1]);
+			if (!level.getBlockState(corner).getCollisionShape(level, corner).isEmpty()) {
+				penalty += 0.2;
 			}
 		}
 		return penalty;
@@ -240,21 +265,9 @@ public final class PathController {
 		if (Math.abs(to.y - from.y) > 0.6) {
 			return false;
 		}
-		double dx = to.x - from.x;
-		double dz = to.z - from.z;
-		double length = Math.sqrt(dx * dx + dz * dz);
-		int samples = Math.max(1, (int) Math.ceil(length / 0.4));
-		for (int i = 1; i <= samples; i++) {
-			double t = (double) i / samples;
-			BlockPos feet = BlockPos.containing(from.x + dx * t, from.y + 0.05, from.z + dz * t);
-			if (!Walkability.isInWorld(level, feet) || !Walkability.isBodyFree(level, feet)) {
-				return false;
-			}
-			BlockPos floor = feet.below();
-			if (level.getBlockState(floor).getCollisionShape(level, floor).isEmpty()) {
-				return false;
-			}
-		}
-		return true;
+		// Boîte réelle du joueur à chaque point (plus une marge de sécurité) : une ligne qui frôle un coin n'est pas "claire".
+		return Walkability.segmentWalkable(level, from, to, LINE_MARGIN, true);
 	}
+
+	private static final double LINE_MARGIN = 0.12;
 }
