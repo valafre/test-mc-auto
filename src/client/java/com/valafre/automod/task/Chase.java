@@ -17,17 +17,17 @@ final class Chase {
 	private boolean moving;
 
 	/** @param sight ligne de vue STABLE sur la cible (évaluée une fois par tick par l'appelant) */
-	void step(Framework f, String owner, Entity target, TargetInfo info, boolean sight, boolean keepLook) {
+	void step(Framework f, String owner, Entity target, TargetInfo info, boolean sight, boolean controlLook) {
 		ModConfig cfg = ModConfig.get();
 		if (!sight) {
 			// Cible derrière un mur : la distance ne dit rien. On contourne (chemin A*) en regardant où l'on marche.
 			moving = true;
-			f.movement().moveTo(f.player(), owner, target.position(), NO_SIGHT_STOP, !keepLook);
+			f.movement().moveTo(f.player(), owner, target.position(), NO_SIGHT_STOP, controlLook);
 			return;
 		}
 		moving = moving ? info.distance() > cfg.approachDistance : info.distance() > cfg.approachDistance + RESUME_MARGIN;
 		if (moving) {
-			f.movement().moveTo(f.player(), owner, target.position(), cfg.approachDistance, false);
+			f.movement().moveTo(f.player(), owner, target.position(), cfg.approachDistance, controlLook);
 		} else {
 			f.movement().reset();
 		}

@@ -20,7 +20,7 @@ public final class ModConfig {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger("automod");
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-	private static final int CURRENT_VERSION = 13;
+	private static final int CURRENT_VERSION = 14;
 	private static ModConfig instance = new ModConfig();
 
 	/** Sert à migrer les anciens fichiers de config dont les valeurs par défaut ont changé. */
@@ -183,9 +183,9 @@ public final class ModConfig {
 	/** Étale chaque pas de rotation sur les images du tick (caméra fluide à haut FPS au lieu de 20 sauts/s). */
 	public boolean smoothFrameRotation = true;
 	/** Caméra naturelle : vitesse angulaire maximale (degrés/tick) ; 18 = environ 360 degrés/s en crête. */
-	public float camPeakSpeedDeg = 11.0f;
+	public float camPeakSpeedDeg = 16.0f;
 	/** Variation maximale de la vitesse de la caméra par tick (degrés/tick²) : démarrage et arrêt progressifs, jamais brusques. */
-	public float camMaxAccelDeg = 3.0f;
+	public float camMaxAccelDeg = 5.0f;
 	/** Amortissement du ressort de caméra : 1 = aucun dépassement (robotique) ; 0.7 = léger dépassement puis retour, comme une vraie main. */
 	public float camDamping = 0.85f;
 	/** Micro-mouvements lents de la caméra (suite de sinusoïdes déphasées, pas de bruit aléatoire saccadé). Amplitude en degrés. */
@@ -356,6 +356,10 @@ public final class ModConfig {
 		if (c.configVersion < 13) { // balise détectée de plus loin (elle était hors du rayon de scan)
 			c.mechanicScanRadius = 24;
 			c.mechanicScanHalfHeight = 6;
+		}
+		if (c.configVersion < 14) { // caméra plus rapide (trop lente et saccadée à 11 / 3)
+			c.camPeakSpeedDeg = 16.0f;
+			c.camMaxAccelDeg = 5.0f;
 		}
 		c.configVersion = CURRENT_VERSION;
 	}

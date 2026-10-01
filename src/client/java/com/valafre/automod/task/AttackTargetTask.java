@@ -27,7 +27,9 @@ public final class AttackTargetTask extends Task {
 	private static final double CLOSE_BACK_DISTANCE = 1.1;
 
 	private static final int WALL_TICKS_BEFORE_DETOUR = 3;
-	private static final double CAMERA_LAG_STOP_DEG = 55.0;
+	private static final double CAMERA_LAG_STOP_DEG = 80.0;
+	private static final double LOOK_ENTER_DISTANCE = 6.0;
+	private static final double LOOK_EXIT_DISTANCE = 8.0;
 	private static final int KEEP_LOOK_TICKS = 3;
 	private static final double KEEP_LOOK_MAX_DISTANCE = 12.0;
 	private static final int STUCK_TICKS = 40;
@@ -44,6 +46,7 @@ public final class AttackTargetTask extends Task {
 	private boolean followDown;
 	private int sightLostTicks;
 	private boolean lastLagStop;
+	private boolean lookEnemy;
 	private Vec3 stuckAnchor;
 	private int stuckTicks;
 	private int unstickTicks;
@@ -77,7 +80,18 @@ public final class AttackTargetTask extends Task {
 		// de basculer vers le chemin, ce qui faisait tourner la caméra de ~100° dans un sens puis dans l'autre.
 		sightLostTicks = sight ? 0 : sightLostTicks + 1;
 		boolean recentlySaw = !sight && sightLostTicks <= KEEP_LOOK_TICKS && info.distance() < KEEP_LOOK_MAX_DISTANCE;
-		if (sight || holdPosition || recentlySaw) {
+		// Qui regarde-t-on ? De loin et sans ligne droite, le chemin (comme un joueur qui court vers le mob) ; dès qu'on est
+		// proche, ou que la cible est en ligne droite, la cible. Hystérésis : pas d'aller-retour caméra à chaque coup d'oeil.
+		boolean straight = f.movement().hasClearLine(f.player(), target.position());
+		boolean seen = sight || recentlySaw;
+		if (holdPosition) {
+			lookEnemy = true;
+		} else if (lookEnemy) {
+			lookEnemy = seen && (info.distance() <= LOOK_EXIT_DISTANCE || straight);
+		} else {
+			lookEnemy = sight && (info.distance() <= LOOK_ENTER_DISTANCE || straight);
+		}
+		if (lookEnemy) {
 			f.rotation().lookAt(aim, target.getBoundingBox(), "ENEMY");
 		}
 
@@ -104,7 +118,7 @@ public final class AttackTargetTask extends Task {
 			// pendant que l'écran tourne en rond (la cible tourne autour de nous plus vite que la caméra ne la suit).
 			double lag = Math.abs(com.valafre.automod.movement.RotationController.yawDelta(
 				f.player().eyePosition(), target.position(), f.player().yaw()));
-			boolean waitForCamera = sight && !detour && lag > CAMERA_LAG_STOP_DEG && info.distance() > 2.5;
+			boolean waitForCamera = lookEnemy && sight && !detour && lag > CAMERA_LAG_STOP_DEG && info.distance() > 2.5;
 			boolean close = sight && !detour && info.distance() <= cfg.approachDistance + CLOSE_ZONE_MARGIN;
 			closeCombat = close;
 			if (waitForCamera) {
@@ -113,7 +127,7 @@ public final class AttackTargetTask extends Task {
 				// Au contact : on avance en continu vers la cible (pas d'arrêt pour frapper), sans balayer l'écran.
 				f.movement().combatMove(f.player(), owner(), info.distance(), CLOSE_BACK_DISTANCE, cfg.combatMinDistance, 0);
 			} else {
-				chase.step(f, owner(), target, info, sight && !detour, recentlySaw && !detour); // trop loin ou sans ligne de vue : on rejoint / contourne
+				chase.step(f, owner(), target, info, sight && !detour, !lookEnemy || detour); // trop loin ou sans ligne de vue : on rejoint / contourne
 			}
 		}
 		// Le boss est tombé plus bas (rebord, plateforme) : on cesse de s'accroupir pour pouvoir le suivre dans le vide.

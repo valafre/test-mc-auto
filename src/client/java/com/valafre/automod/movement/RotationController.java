@@ -29,7 +29,7 @@ public final class RotationController {
 	private static final float COAST_DECAY = 0.6f;
 	private static final float COAST_MIN = 0.05f;
 	/** Vitesse max quand la caméra suit seulement le chemin (marche) : plus posée que pour viser un ennemi. */
-	private static final float WALK_PEAK_DEG = 10.0f;
+	private static final float WALK_PEAK_DEG = 14.0f;
 	private static final double EYE_SMOOTHING = 0.3;
 	/** Cible (bord de hitbox) plus proche que ça en horizontal : l'angle visé n'a plus de sens, la caméra se fige. */
 	private static final double NEAR_ENEMY_RANGE = 0.9;

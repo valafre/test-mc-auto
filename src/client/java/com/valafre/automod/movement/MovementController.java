@@ -56,8 +56,8 @@ public final class MovementController {
 	// Déblocage rapide : fenêtre courte de progrès, escalade de manoeuvres, cases à éviter.
 	/** Au-delà de cet écart (degrés) entre le regard et le point visé, on tourne la caméra plutôt que de marcher de biais. */
 	private static final float MAX_STRAFE_YAW = 60.0f;
-	private static final double FORWARD_ANGLE_ON = 40.0;
-	private static final double FORWARD_ANGLE_OFF = 55.0;
+	private static final double FORWARD_ANGLE_ON = 70.0;
+	private static final double FORWARD_ANGLE_OFF = 90.0;
 	private boolean forwardOnly;
 	private static final double PATH_END_RADIUS = 0.6;
 	private static final double LOOK_NEAR = 1.2;
@@ -233,6 +233,11 @@ public final class MovementController {
 		}
 		// Rien de plus loin : on vise quand même le point s'il est assez loin pour que la direction soit stable.
 		return dx * dx + dz * dz >= LOOK_MIN * LOOK_MIN ? waypoint : null;
+	}
+
+	/** Ligne droite franchissable (à plat, avec marge) entre le joueur et {@code dest} ? */
+	public boolean hasClearLine(PlayerState state, Vec3 dest) {
+		return paths.isClearLine(state.level(), state.position(), dest);
 	}
 
 	/** Le joueur est-il en train de se débloquer ? (les appelants relâchent alors le sneak, etc.) */
