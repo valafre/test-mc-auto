@@ -142,6 +142,9 @@ public final class VoidgloomGuiModule implements GuiModule {
 			.slider("Rayon du snapshot local", null, () -> c().navLocalSnapshotRadius, v -> c().navLocalSnapshotRadius = (int) v, 6, 20, 1, 0, " m")
 			.slider("Budget du snapshot", "Temps max passé sur le thread Minecraft à copier la géométrie", () -> c().navSnapshotBudgetMs, v -> c().navSnapshotBudgetMs = v, 0.5, 8, 0.5, 1, " ms")
 			.slider("Durée de vie du cache", "Ticks avant relecture d'une zone proche", () -> c().navTileTtlTicks, v -> c().navTileTtlTicks = (int) v, 2, 60, 1, 0, " t");
+		b.card("Réinitialisation")
+			.button("Navigation par défaut", "Remet tous les réglages de chemin, navigation et calcul asynchrone aux valeurs d'origine",
+				"Réinitialiser", com.valafre.automod.gui.components.Button.Kind.DANGER, ModConfig::resetNavigation);
 		b.card("Caméra", "Rotation lissée et naturelle")
 			.toggle("Humaniser", "Légère variation de visée", () -> c().humanize, v -> c().humanize = v)
 			.toggle("Rotation par image", "Applique la rotation à chaque image affichée", () -> c().smoothFrameRotation, v -> c().smoothFrameRotation = v)

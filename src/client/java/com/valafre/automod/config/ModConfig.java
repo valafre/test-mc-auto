@@ -447,6 +447,25 @@ public final class ModConfig {
 		}
 	}
 
+	/** Remet aux valeurs par défaut tous les réglages de navigation / chemin / calcul asynchrone (le reste de la config est conservé). */
+	public static void resetNavigation() {
+		ModConfig defaults = new ModConfig();
+		for (java.lang.reflect.Field f : ModConfig.class.getDeclaredFields()) {
+			String n = f.getName();
+			boolean nav = n.startsWith("nav") || n.equals("pathMaxNodes") || n.equals("maxDropBlocks")
+				|| n.equals("pathRecomputeIntervalTicks") || n.equals("moveTimeoutTicks") || n.equals("stuckWindowTicks");
+			if (!nav || java.lang.reflect.Modifier.isStatic(f.getModifiers())) {
+				continue;
+			}
+			try {
+				f.set(instance, f.get(defaults));
+			} catch (IllegalAccessException e) {
+				LOGGER.warn("Reset navigation impossible pour {}", n, e);
+			}
+		}
+		save();
+	}
+
 	public static void resetToDefaults() {
 		instance = new ModConfig();
 		migrate();

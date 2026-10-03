@@ -49,7 +49,9 @@ public final class SettingsPage extends Page {
 		}
 
 		b.card("Avancé")
-			.toggle("Mode debug", "Lignes de diagnostic supplémentaires dans le HUD", () -> c().debugMode, v -> c().debugMode = v);
+			.toggle("Mode debug", "Lignes de diagnostic supplémentaires dans le HUD", () -> c().debugMode, v -> c().debugMode = v)
+			.button("Tout réinitialiser", "Remet TOUTE la configuration aux valeurs d'origine (modules, caméra, HUD, navigation)", "Réinitialiser",
+				Button.Kind.DANGER, ModConfig::resetToDefaults);
 		scroll = add(new ScrollContainer(b.build()));
 	}
 
