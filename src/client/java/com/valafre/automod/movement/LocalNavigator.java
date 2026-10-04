@@ -56,12 +56,23 @@ public final class LocalNavigator {
 	private long latestRequestTick;
 	private double prevHeading = Double.NaN;
 
+	// Engagement de cap : évite qu'une petite variation de score toutes les 2 ticks fasse alterner gauche/droite.
+	// On garde un cap tant qu'il reste praticable ; seul un vrai avantage ou une perte de sécurité force le changement.
+	private static final int HEADING_HOLD_TICKS = 6;
+	private static final double HEADING_SWITCH_DEGREES = 18.0;
+	private static final int HEADING_CLEAR_ADVANTAGE_STEPS = 2;
+	private static final double HEADING_ALIGNMENT_ADVANTAGE_DEGREES = 28.0;
+	private double committedHeading = Double.NaN;
+	private long committedUntilTick = Long.MIN_VALUE / 2;
+
 	public void reset() {
 		generation++;
 		latest = null;
 		guideAtRequest = null;
 		requestTick = Long.MIN_VALUE / 2;
 		prevHeading = Double.NaN;
+		committedHeading = Double.NaN;
+		committedUntilTick = Long.MIN_VALUE / 2;
 		requestTicks.clear();
 	}
 
@@ -160,14 +171,66 @@ public final class LocalNavigator {
 		if (age > MAX_AGE_TICKS) {
 			return null;
 		}
-		// Le joueur a avancé depuis la demande : le cap est-il TOUJOURS libre depuis ici ?
-		int clear = LocalPlanner.clearSteps(live, pos.x, pos.y, pos.z, latest.heading(), minSafe, params);
+		// Le joueur a avancé depuis la demande : le cap engagé est-il TOUJOURS libre depuis ici ?
+		double heading = effectiveHeading(live, pos, guideAtRequest, latest.heading(), params, minSafe, tick);
+		int clear = LocalPlanner.clearSteps(live, pos.x, pos.y, pos.z, heading, minSafe, params);
 		if (clear < minSafe) {
 			return null;
 		}
-		return new Steering(pointAlong(pos, latest.heading(), LOOK_DISTANCE), latest.heading(), true, latest.clearSteps(),
-			latest.jump(), latest.sprintOk() && age <= 3, cell(latest.blockedCell()), false, null, "-", latest.clearDistance(),
-			pos.y, false);
+		return new Steering(pointAlong(pos, heading, LOOK_DISTANCE), heading, true, clear,
+			latest.jump(), latest.sprintOk() && age <= 3, cell(latest.blockedCell()), false, null, "-",
+			clear * params.sampleDistance(), pos.y, false);
+	}
+
+	/**
+	 * Stabilise le choix du côté. Deux directions quasi équivalentes ne doivent pas se remplacer toutes les 100 ms.
+	 * Le cap courant est conservé pendant une courte fenêtre et n'est remplacé que s'il devient dangereux ou si le nouveau
+	 * cap apporte un avantage net (ou rapproche nettement du guide).
+	 */
+	private double effectiveHeading(NavWorld live, Vec3 pos, Vec3 guide, double candidateHeading, NavParams params, int minSafe, long tick) {
+		if (Double.isNaN(committedHeading)) {
+			committedHeading = candidateHeading;
+			committedUntilTick = tick + HEADING_HOLD_TICKS;
+			prevHeading = candidateHeading;
+			return candidateHeading;
+		}
+
+		int currentClear = LocalPlanner.clearSteps(live, pos.x, pos.y, pos.z, committedHeading, minSafe, params);
+		double candidateDelta = Math.abs(wrap(candidateHeading - committedHeading));
+
+		// Si le cap actuel devient réellement dangereux, on change immédiatement.
+		if (currentClear < minSafe) {
+			committedHeading = candidateHeading;
+			committedUntilTick = tick + HEADING_HOLD_TICKS;
+			prevHeading = committedHeading;
+			return committedHeading;
+		}
+
+		// Petite variation : pas de changement de côté.
+		if (candidateDelta < HEADING_SWITCH_DEGREES) {
+			prevHeading = committedHeading;
+			return committedHeading;
+		}
+
+		// Fenêtre d'engagement : on garde la décision, sauf nécessité de sécurité traitée ci-dessus.
+		if (tick < committedUntilTick) {
+			prevHeading = committedHeading;
+			return committedHeading;
+		}
+
+		int candidateClear = Math.max(0, latest == null ? 0 : latest.clearSteps());
+		double guideYaw = guide == null ? candidateHeading : LocalPlanner.yawTo(pos.x, pos.z, guide.x, guide.z);
+		double currentAlign = Math.abs(wrap(guideYaw - committedHeading));
+		double candidateAlign = Math.abs(wrap(guideYaw - candidateHeading));
+		boolean clearAdvantage = candidateClear >= currentClear + HEADING_CLEAR_ADVANTAGE_STEPS;
+		boolean alignmentAdvantage = candidateAlign + HEADING_ALIGNMENT_ADVANTAGE_DEGREES <= currentAlign && candidateClear >= minSafe;
+
+		if (clearAdvantage || alignmentAdvantage) {
+			committedHeading = candidateHeading;
+			committedUntilTick = tick + HEADING_HOLD_TICKS;
+		}
+		prevHeading = committedHeading;
+		return committedHeading;
 	}
 
 	/** Repli léger sur le thread Minecraft (un ou deux rollouts en cache) : cap vers le guide s'il est libre, sinon cap précédent. */
@@ -188,6 +251,18 @@ public final class LocalNavigator {
 
 	private static BlockPos cell(long packed) {
 		return packed == NavGeometry.NO_BLOCK ? null : BlockPos.of(packed);
+	}
+
+	/** Normalise un angle en degrés dans l'intervalle [-180, 180). */
+	private static double wrap(double degrees) {
+		double wrapped = degrees % 360.0;
+		if (wrapped >= 180.0) {
+			wrapped -= 360.0;
+		}
+		if (wrapped < -180.0) {
+			wrapped += 360.0;
+		}
+		return wrapped;
 	}
 
 	private static Vec3 pointAlong(Vec3 pos, double headingDeg, double distance) {

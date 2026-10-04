@@ -583,6 +583,8 @@ public final class MovementController {
 		backOn = false;
 		leftOn = false;
 		rightOn = false;
+		committedSide = 0;
+		committedSideUntil = Long.MIN_VALUE / 2;
 		windowStart = null;
 		windowTicks = 0;
 		stuckWindows = 0;
@@ -620,6 +622,10 @@ public final class MovementController {
 	private boolean combatFwdKey;
 	private boolean combatLeftKey;
 	private boolean combatRightKey;
+
+	// Engagement latéral : évite qu'un cap proche de l'axe 0 fasse alterner gauche/droite à chaque replan.
+	private int committedSide; // -1 gauche, +1 droite, 0 neutre
+	private long committedSideUntil = Long.MIN_VALUE / 2;
 
 	/**
 	 * Mouvement de combat NAVIGUÉ : on garde la distance de combat (entre {@code keepMin} et {@code keepMax}) en avançant
@@ -922,9 +928,25 @@ public final class MovementController {
 		forwardOn = hysteresis(forwardOn, fwd) && !braking;
 		// Reculer : indispensable quand on regarde la cible mais que le chemin part dans l'autre sens (contournement d'un mur).
 		backOn = hysteresis(backOn, -fwd) && !braking;
-		leftOn = hysteresis(leftOn, -side);
-		rightOn = hysteresis(rightOn, side);
-		if (leftOn && rightOn) { // ne peut arriver qu'à la limite exacte des seuils
+
+		long now = state.level().getGameTime();
+		int desiredSide = Math.abs(side) >= KEY_ON ? (side > 0 ? 1 : -1) : 0;
+		boolean currentSideStillUseful = committedSide != 0 && side * committedSide > KEY_OFF;
+		if (desiredSide != 0) {
+			if (committedSide == 0) {
+				committedSide = desiredSide;
+				committedSideUntil = now + 6;
+			} else if (desiredSide != committedSide && now >= committedSideUntil && !currentSideStillUseful) {
+				committedSide = desiredSide;
+				committedSideUntil = now + 6;
+			}
+		} else if (committedSide != 0 && now >= committedSideUntil && Math.abs(side) < KEY_OFF) {
+			committedSide = 0;
+		}
+
+		leftOn = committedSide < 0 && hysteresis(leftOn, Math.max(0.0, -side));
+		rightOn = committedSide > 0 && hysteresis(rightOn, Math.max(0.0, side));
+		if (leftOn && rightOn) {
 			leftOn = false;
 			rightOn = false;
 		}
