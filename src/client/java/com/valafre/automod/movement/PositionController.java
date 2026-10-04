@@ -9,6 +9,8 @@ import net.minecraft.core.Direction;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -74,76 +76,119 @@ public final class PositionController {
 		return Optional.ofNullable(best);
 	}
 
+	private record Draft(BlockPos pos, Slot slot, double combatDist, double roughScore) {}
+
+	/**
+	 * Deux phases pour éviter les rafales d'A* pendant un repositionnement :
+	 * 1) filtrage et chemin direct bon marché ; 2) au maximum trois candidats non directs soumis au petit A* synchrone.
+	 */
 	private Candidate search(PlayerState state, Request request, boolean touchOnly) {
 		ModConfig cfg = ModConfig.get();
 		Level level = state.level();
 		BlockPos playerPos = Walkability.cellOf(state.position());
-		Candidate best = null;
-
+		List<Draft> drafts = new ArrayList<>();
+		Candidate bestDirect = null;
+		
 		for (Slot slot : Slot.values()) {
 			if (slot == Slot.ABOVE && !cfg.allowAbovePosition) {
 				continue;
 			}
 			boolean diagonal = slot.dx != 0 && slot.dz != 0;
 			if (touchOnly && diagonal) {
-				continue; // une diagonale ne touche le bloc que par une arête, pas par une face
+				continue;
 			}
 			int maxRing = touchOnly || slot == Slot.ABOVE ? 1 : Math.max(1, cfg.positionRingRadius);
 			for (int ring = 1; ring <= maxRing; ring++) {
 				BlockPos base = slot == Slot.ABOVE
 					? request.anchor().above()
 					: request.anchor().offset(slot.dx * ring, 0, slot.dz * ring);
-				// Contact : même niveau que le bloc (ou une marche en dessous, le corps touche encore sa face).
 				int[] yOffsets = slot == Slot.ABOVE ? new int[] {0} : touchOnly ? new int[] {0, -1} : new int[] {0, 1, -1};
 				for (int dy : yOffsets) {
-					Candidate c = evaluate(state, level, playerPos, request, slot, base.above(dy));
-					if (c != null) {
-						c = new Candidate(c.pos(), c.slot(), c.score(), c.pathLength(), touchOnly);
-						if (best == null || c.score() > best.score()) {
-							best = c;
+					BlockPos pos = base.above(dy);
+					Draft d = draft(state, level, request, slot, pos);
+					if (d == null) {
+						continue;
+					}
+					Vec3 player = state.position();
+					double standY = Walkability.standHeight(level, pos);
+					if (Double.isNaN(standY)) {
+						continue;
+					}
+					Vec3 candidatePos = new Vec3(pos.getX() + 0.5, standY, pos.getZ() + 0.5);
+					boolean direct = Math.abs(standY - player.y) <= 0.6
+						&& Walkability.segmentWalkable(level, player, candidatePos, 0.12, true);
+					if (direct) {
+						double score = score(state, level, request, slot, pos,
+							Math.max(1, (int) Math.ceil(Math.hypot(candidatePos.x - player.x, candidatePos.z - player.z))), d.combatDist());
+						Candidate c = new Candidate(pos, slot, score, Math.max(1, (int) Math.ceil(Math.hypot(candidatePos.x - player.x, candidatePos.z - player.z))), touchOnly);
+						if (bestDirect == null || c.score() > bestDirect.score()) {
+							bestDirect = c;
 						}
+					} else {
+						drafts.add(d);
 					}
 				}
+			}
+		}
+
+		if (bestDirect != null) {
+			return bestDirect;
+		}
+
+		// Le pathfinding synchrone est uniquement un secours de repositionnement, jamais une boucle A* par candidate.
+		drafts.sort(Comparator.comparingDouble(Draft::roughScore).reversed());
+		Candidate best = null;
+		int pathAttempts = 0;
+		for (Draft d : drafts) {
+			if (pathAttempts >= 3) {
+				break;
+			}
+			pathAttempts++;
+			List<NavPoint> path = paths.findPath(level, playerPos, d.pos(), Math.min(cfg.pathMaxNodes, 350));
+			if (path.isEmpty() && !d.pos().equals(playerPos)) {
+				continue;
+			}
+			Candidate c = new Candidate(d.pos(), d.slot(), score(state, level, request, d.slot(), d.pos(), path.size(), d.combatDist()), path.size(), touchOnly);
+			if (best == null || c.score() > best.score()) {
+				best = c;
 			}
 		}
 		return best;
 	}
 
-	/** @return la position notée, ou null si rejetée (la raison est loguée en debug). */
-	private Candidate evaluate(PlayerState state, Level level, BlockPos playerPos, Request req, Slot slot, BlockPos pos) {
+	private Draft draft(PlayerState state, Level level, Request req, Slot slot, BlockPos pos) {
 		ModConfig cfg = ModConfig.get();
 		BlockPos anchor = req.anchor();
-
-		// 1. Règle absolue : jamais directement SOUS la mécanique (Y inférieur ET dans son emprise horizontale).
 		if (isUnder(pos, anchor, cfg.underMechanicRadius)) {
-			return reject(slot, pos, "sous la mécanique");
+			reject(slot, pos, "sous la mécanique");
+			return null;
 		}
-		// 2. Déjà essayée sans succès.
 		if (req.excluded().contains(pos)) {
-			return reject(slot, pos, "déjà essayée");
+			reject(slot, pos, "déjà essayée");
+			return null;
 		}
-		// 3. Dans le monde + libre de collision + sol solide.
-		if (!Walkability.isInWorld(level, pos)) {
-			return reject(slot, pos, "hors du monde / chunk non chargé");
+		if (!Walkability.isInWorld(level, pos) || !Walkability.canStandAt(level, pos)) {
+			reject(slot, pos, "occupée, sans sol ou hors monde");
+			return null;
 		}
-		if (!Walkability.canStandAt(level, pos)) {
-			return reject(slot, pos, "occupée ou sans sol");
-		}
-		// 4. Compatible avec le combat : proche de la cible.
 		double combatDist = 0;
 		if (req.combatTarget() != null) {
-			combatDist = req.combatTarget().distanceTo(new Vec3(pos.getX() + 0.5, pos.getY() + 1.0, pos.getZ() + 0.5));
+			Vec3 candidate = new Vec3(pos.getX() + 0.5, Walkability.standHeight(level, pos), pos.getZ() + 0.5);
+			combatDist = req.combatTarget().distanceTo(candidate);
 			if (combatDist > cfg.positionCombatMaxDistance) {
-				return reject(slot, pos, "trop loin de la cible de combat");
+				reject(slot, pos, "trop loin de la cible de combat");
+				return null;
 			}
 		}
-		// 5. Accessible à pied (A* borné).
-		List<NavPoint> path = paths.findPath(level, playerPos, pos, cfg.pathMaxNodes);
-		if (path.isEmpty() && !pos.equals(playerPos)) {
-			return reject(slot, pos, "inaccessible");
+		// Pré-score léger : assez précis pour classer quelques candidats avant l'A*.
+		double rough = 100.0 - 1.5 * combatDist - 6.0 * Math.hypot(pos.getX() - anchor.getX(), pos.getZ() - anchor.getZ());
+		if (slot == Slot.ABOVE) {
+			rough -= 10.0;
 		}
-
-		return new Candidate(pos, slot, score(state, level, req, slot, pos, path.size(), combatDist), path.size(), false);
+		if (pos.getY() < anchor.getY()) {
+			rough -= 5.0;
+		}
+		return new Draft(pos, slot, combatDist, rough);
 	}
 
 	private static boolean isUnder(BlockPos pos, BlockPos anchor, double radius) {

@@ -124,9 +124,14 @@ public final class LocalNavigator {
 		int radius = Math.max(6, cfg.navLocalSnapshotRadius);
 		NavigationWorldCache cache = service.cache();
 		cache.begin(state.level(), cfg.navTileTtlTicks);
-		NavGrid grid = cache.snapshot((int) Math.floor(pos.x) - radius, (int) Math.floor(pos.y) - 4, (int) Math.floor(pos.z) - radius,
-			(int) Math.floor(pos.x) + radius, (int) Math.floor(pos.y) + 5, (int) Math.floor(pos.z) + radius, pos.x, pos.z,
-			cfg.navSnapshotBudgetMs);
+		int minX = (int) Math.floor(pos.x) - radius;
+		int minY = (int) Math.floor(pos.y) - 4;
+		int minZ = (int) Math.floor(pos.z) - radius;
+		int maxX = (int) Math.floor(pos.x) + radius;
+		int maxY = (int) Math.floor(pos.y) + 5;
+		int maxZ = (int) Math.floor(pos.z) + radius;
+		cache.prepareRegion(minX, minY, minZ, maxX, maxY, maxZ, pos.x, pos.z, Math.min(0.9, Math.max(0.15, cfg.navSnapshotBudgetMs * 0.35)));
+		NavGrid grid = cache.snapshot(minX, minY, minZ, maxX, maxY, maxZ, pos.x, pos.z, cfg.navSnapshotBudgetMs);
 		long id = ++sequence;
 		LocalRequest req = new LocalRequest(id, generation, grid, pos.x, pos.y, pos.z, guide.x, guide.y, guide.z,
 			state.horizontalSpeed(), prevHeading, combat != null,

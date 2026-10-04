@@ -10,20 +10,25 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.shapes.VoxelShape;
 
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * Cache de géométrie de navigation (THREAD MINECRAFT UNIQUEMENT). Conserve des {@link NavTile} immuables de 8 x 8 x 8 cellules :
- * par bloc, ses boîtes de collision (lues UNE fois par état de bloc, plus un appel getCollisionShape par test) et ses
- * drapeaux (danger, liquide). Les tuiles sont rafraîchies par péremption (TTL) et seulement celles qui servent ; un snapshot
- * est un simple assemblage de références vers des tuiles immuables (pas de copie), donc peu coûteux et sûr à passer au worker.
+ * Cache de géométrie de navigation, construit UNIQUEMENT sur le thread Minecraft.
+ *
+ * <p>Point important : la vue live n'a plus de {@code TileSource} qui construit une tuile à la demande. Cela évite qu'une
+ * simple collision check dans le mouvement déclenche une construction de 512 blocs sur le thread principal. Les tuiles sont
+ * préparées à l'avance avec un budget très court et les workers reçoivent uniquement des tuiles immuables déjà construites.</p>
  */
 public final class NavigationWorldCache {
 
 	private record StateData(float[] boxes, byte flags) {}
+	private record TileCandidate(int tx, int ty, int tz, double distanceSq, boolean missing) {}
 
 	private final Map<Long, NavTile> tiles = new HashMap<>();
 	private final Map<Long, Long> lastUsed = new HashMap<>();
@@ -32,8 +37,10 @@ public final class NavigationWorldCache {
 	private long now;
 	private long lastPrune;
 	private int liveTtl = 10;
-	private NavGrid liveGrid;
-	private long liveGridTick = Long.MIN_VALUE;
+
+	private final NavGrid liveGrid = new NavGrid(Collections.unmodifiableMap(tiles), null);
+	private long lastPrepareTick = Long.MIN_VALUE;
+	private int buildsThisTick;
 
 	// Statistiques (profilage)
 	public long tilesBuilt;
@@ -42,66 +49,108 @@ public final class NavigationWorldCache {
 	public long snapshotNanos;
 	public long snapshotTruncated;
 
-	/** À appeler avant toute lecture : synchronise avec le monde courant et l'heure de jeu. */
+	/** À appeler avant toute lecture du cache. */
 	public void begin(Level lvl, int liveTtlTicks) {
 		if (lvl != level) {
 			level = lvl;
 			tiles.clear();
 			lastUsed.clear();
-			liveGrid = null;
 			states.clear();
+			lastPrepareTick = Long.MIN_VALUE;
+			buildsThisTick = 0;
 		}
 		liveTtl = Math.max(1, liveTtlTicks);
 		now = lvl.getGameTime();
-		if (now - lastPrune > 200) { // oublie les tuiles non utilisées depuis 30 s
+		if (now - lastPrune > 200) {
 			lastPrune = now;
 			lastUsed.entrySet().removeIf(e -> now - e.getValue() > 600 && tiles.remove(e.getKey()) != null);
 		}
 	}
 
-	/** Vue « live » (thread Minecraft) : tuiles construites à la demande, rafraîchies après le TTL. Valable pour ce tick. */
+	/**
+	 * Vue live SANS construction implicite. Les cellules manquantes restent inconnues et sont traitées comme non sûres.
+	 * La construction se fait par {@link #prepareRegion} depuis les points de décision du déplacement.
+	 */
 	public NavWorld live() {
-		if (liveGrid == null || liveGridTick != now) {
-			liveGrid = new NavGrid(Map.of(), (tx, ty, tz) -> tile(tx, ty, tz, liveTtl));
-			liveGridTick = now;
-		}
 		return liveGrid;
 	}
 
-	private NavTile tile(int tx, int ty, int tz, int ttl) {
-		long key = NavTile.key(tx, ty, tz);
-		NavTile t = tiles.get(key);
-		if (t == null || now - t.builtTick > ttl) {
-			t = build(tx, ty, tz);
-			tiles.put(key, t);
+	/**
+	 * Prépare progressivement une zone. Au plus le budget demandé est dépensé et chaque appel privilégie les tuiles proches de
+	 * l'ancre. Cette méthode est volontairement synchrone, mais bornée : elle ne doit jamais être appelée avec un budget élevé.
+	 */
+	public int prepareRegion(int minX, int minY, int minZ, int maxX, int maxY, int maxZ,
+				double anchorX, double anchorZ, double budgetMs) {
+		long t0 = System.nanoTime();
+		if (now != lastPrepareTick) {
+			lastPrepareTick = now;
+			buildsThisTick = 0;
 		}
-		lastUsed.put(key, now);
-		return t;
+		// Une seule construction de tuile par tick, toutes les demandes confondues. Une tuile Minecraft est indivisible :
+		// un budget inférieur à son temps de construction ne peut pas interrompre build(), donc on limite d'abord le nombre de tuiles.
+		if (buildsThisTick >= 1 || budgetMs <= 0.0) {
+			return 0;
+		}
+		long deadline = t0 + (long) (Math.max(0.10, budgetMs) * 1_000_000.0);
+		int minTx = minX >> 3;
+		int maxTx = maxX >> 3;
+		int minTy = minY >> 3;
+		int maxTy = maxY >> 3;
+		int minTz = minZ >> 3;
+		int maxTz = maxZ >> 3;
+
+		List<TileCandidate> candidates = new ArrayList<>();
+		for (int tx = minTx; tx <= maxTx; tx++) {
+			for (int tz = minTz; tz <= maxTz; tz++) {
+				double cx = tx * 8 + 4;
+				double cz = tz * 8 + 4;
+				double dx = cx - anchorX;
+				double dz = cz - anchorZ;
+				for (int ty = minTy; ty <= maxTy; ty++) {
+					long key = NavTile.key(tx, ty, tz);
+					NavTile t = tiles.get(key);
+					int ttl = dx * dx + dz * dz < 16 * 16 ? Math.max(liveTtl, 20) : Math.max(liveTtl * 6, 120);
+					boolean missing = t == null;
+					boolean stale = missing || now - t.builtTick > ttl;
+					if (stale) {
+						candidates.add(new TileCandidate(tx, ty, tz, dx * dx + dz * dz, missing));
+					}
+				}
+			}
+		}
+		candidates.sort(Comparator.<TileCandidate>comparingInt(c -> c.missing() ? 0 : 1).thenComparingDouble(TileCandidate::distanceSq));
+
+		int built = 0;
+		for (TileCandidate c : candidates) {
+			if (System.nanoTime() >= deadline) {
+				break;
+			}
+			NavTile t = build(c.tx(), c.ty(), c.tz());
+			tiles.put(NavTile.key(c.tx(), c.ty(), c.tz()), t);
+			lastUsed.put(NavTile.key(c.tx(), c.ty(), c.tz()), now);
+			built++;
+			buildsThisTick++;
+			break;
+		}
+		return built;
 	}
 
+
 	/**
-	 * Snapshot de la zone [minX..maxX] x [minY..maxY] x [minZ..maxZ] (coordonnées de blocs). Les tuiles proches de
-	 * {@code (px, pz)} sont rafraîchies selon le TTL ; les lointaines vivent 6 fois plus longtemps ; la construction est bornée
-	 * par {@code budgetMs} (une tuile manquante hors budget reste INCONNUE : la zone est tronquée et se complétera au snapshot suivant).
+	 * Assemblage non bloquant d'un snapshot à partir des tuiles déjà disponibles. AUCUNE construction de tuile ici.
+	 * Les tuiles absentes deviennent inconnues dans le worker et seront récupérées par les prochains appels à prepareRegion.
 	 */
-	public NavGrid snapshot(int minX, int minY, int minZ, int maxX, int maxY, int maxZ, double px, double pz, double budgetMs) {
+	public NavGrid snapshot(int minX, int minY, int minZ, int maxX, int maxY, int maxZ,
+			double px, double pz, double budgetMs) {
 		long t0 = System.nanoTime();
-		long deadline = t0 + (long) (budgetMs * 1_000_000.0);
 		Map<Long, NavTile> picked = new HashMap<>();
 		boolean truncated = false;
 		for (int tx = minX >> 3; tx <= maxX >> 3; tx++) {
 			for (int tz = minZ >> 3; tz <= maxZ >> 3; tz++) {
-				double dx = tx * 8 + 4 - px;
-				double dz = tz * 8 + 4 - pz;
-				int ttl = dx * dx + dz * dz < 18 * 18 ? liveTtl : liveTtl * 6;
 				for (int ty = minY >> 3; ty <= maxY >> 3; ty++) {
 					long key = NavTile.key(tx, ty, tz);
 					NavTile t = tiles.get(key);
-					boolean stale = t == null || now - t.builtTick > ttl;
-					if (stale && System.nanoTime() < deadline) {
-						t = build(tx, ty, tz);
-						tiles.put(key, t);
-					} else if (stale && t == null) {
+					if (t == null) {
 						truncated = true;
 						continue;
 					}
@@ -115,8 +164,9 @@ public final class NavigationWorldCache {
 		if (truncated) {
 			snapshotTruncated++;
 		}
-		return new NavGrid(picked, null);
+		return new NavGrid(Map.copyOf(picked), null);
 	}
+
 
 	// ========================================
 	// CONSTRUCTION D'UNE TUILE
@@ -133,7 +183,7 @@ public final class NavigationWorldCache {
 					for (int lz = 0; lz < 8; lz++) {
 						p.set(tx * 8 + lx, ty * 8 + ly, tz * 8 + lz);
 						if (level.isOutsideBuildHeight(p)) {
-							continue; // inconnu
+							continue;
 						}
 						BlockState state = level.getBlockState(p);
 						int i = NavTile.index(lx, ly, lz);

@@ -44,6 +44,7 @@ public final class MovementController {
 	private List<NavPoint> path = List.of();
 	private int pathIndex;
 	private BlockPos pathGoal;
+	private Vec3 lastRequestedDestination;
 	private int ticksSincePath = Integer.MAX_VALUE / 2;
 	private boolean lineClear;
 	private int ticksSinceRequest = Integer.MAX_VALUE / 2;
@@ -54,6 +55,9 @@ public final class MovementController {
 	private int ticksSinceLookahead;
 	private int collisionTicks;   // ticks consécutifs collé à un obstacle : déclenche un nouveau calcul de chemin
 	private int ticksSinceLineCheck = Integer.MAX_VALUE / 2;
+	private long waypointValidationTick = Long.MIN_VALUE / 2;
+	private Vec3 lastValidatedWaypoint;
+	private boolean lastWaypointValid = true;
 
 	private int jumpCooldown;
 	private int windowTicks;
@@ -84,8 +88,8 @@ public final class MovementController {
 	// Déblocage rapide : fenêtre courte de progrès, escalade de manoeuvres, cases à éviter.
 	/** Au-delà de cet écart (degrés) entre le regard et le point visé, on tourne la caméra plutôt que de marcher de biais. */
 	private static final float MAX_STRAFE_YAW = 60.0f;
-	private static final int VALIDATE_INTERVAL_TICKS = 4;
-	private static final int VALIDATE_NODES = 3;
+	private static final int VALIDATE_INTERVAL_TICKS = 6;
+	private static final int VALIDATE_NODES = 2;
 	private int validateTicks;
 	private static final double FORWARD_ANGLE_ON = 70.0;
 	private static final double FORWARD_ANGLE_OFF = 90.0;
@@ -270,7 +274,8 @@ public final class MovementController {
 				RotationController.computeYaw(state.eyePosition(), wp), st == null ? "n/a" : "true", valid, locked,
 				controlLook, forced ? " (IMPOSÉ: waypoint à >60° du regard)" : "", pathIndex, path.size()));
 		}
-		if (controlLook) {
+		if (controlLook && !cameraLocked) {
+			// Un lock de combat valide reste propriétaire de la caméra ; le déplacement ne remplace jamais ENEMY par PATH.
 			// Regard à hauteur des yeux pour garder un pitch neutre pendant la marche.
 			Vec3 lookTarget = lookAheadPoint(state.level(), pos, waypoint);
 			if (lookTarget != null) {
@@ -322,7 +327,10 @@ public final class MovementController {
 		resetMotion();
 		paths.invalidate();
 		path = List.of();
+		lastValidatedWaypoint = null;
+		waypointValidationTick = Long.MIN_VALUE / 2;
 		pathGoal = null;
+		lastRequestedDestination = null;
 		ticksSincePath = Integer.MAX_VALUE / 2;
 	}
 
@@ -333,18 +341,27 @@ public final class MovementController {
 	 */
 	private boolean checkWaypointSegment(PlayerState state, Vec3 wp) {
 		Vec3 pos = state.position();
+		long tick = state.level().getGameTime();
+		if (lastValidatedWaypoint != null && tick - waypointValidationTick < 2
+			&& lastValidatedWaypoint.distanceToSqr(wp) < 0.36) {
+			return lastWaypointValid;
+		}
+		waypointValidationTick = tick;
+		lastValidatedWaypoint = wp;
 		if (Math.abs(wp.y - pos.y) > 0.6 || !state.onGround()) {
-			return true; // marches et chutes : gérées par stepAhead / le chemin
+			lastWaypointValid = true; // marches et chutes : gérées par stepAhead / le chemin
+			return true;
 		}
 		Vec3 end = wp;
 		double dx = wp.x - pos.x;
 		double dz = wp.z - pos.z;
 		double len = Math.sqrt(dx * dx + dz * dz);
-		if (len > SAFE_CHECK_LENGTH) { // inutile de valider plus loin que ce qu'on parcourra avant le prochain contrôle
+		if (len > SAFE_CHECK_LENGTH) {
 			end = new Vec3(pos.x + dx / len * SAFE_CHECK_LENGTH, wp.y, pos.z + dz / len * SAFE_CHECK_LENGTH);
 		}
 		BlockPos blocked = Walkability.segmentBlockedAt(state.level(), pos, end, 0.0);
-		if (blocked == null) {
+		lastWaypointValid = blocked == null;
+		if (lastWaypointValid) {
 			return true;
 		}
 		requestReplan(blocked);
@@ -715,6 +732,7 @@ public final class MovementController {
 		// 2. La destination a fortement bougé (téléportation de la cible...) : le chemin et les résultats en vol sont obsolètes.
 		//    On invalide le chemin, pas la cible ; la navigation locale guide en attendant le nouveau calcul.
 		BlockPos goal = Walkability.cellOf(dest);
+		boolean destinationMoved = lastRequestedDestination != null && lastRequestedDestination.distanceToSqr(dest) > 0.5625;
 		if (pathGoal != null && pathGoal.distSqr(goal) > 36) {
 			paths.invalidate();
 			path = List.of();
@@ -722,7 +740,7 @@ public final class MovementController {
 			lineClear = false;
 			pathGoal = null;
 		}
-		boolean goalMoved = pathGoal == null || pathGoal.distSqr(goal) > 4;
+		boolean goalMoved = pathGoal == null || pathGoal.distSqr(goal) > 4 || destinationMoved;
 
 		// 3. Contrôle léger toutes les navReplanTicks : faut-il LANCER un calcul ? (jamais un A* complet à chaque contrôle)
 		ticksSinceRequest++;
@@ -737,6 +755,7 @@ public final class MovementController {
 			}
 			paths.request(state.level(), pos, dest, lightRetry);
 			pathGoal = goal;
+			lastRequestedDestination = dest;
 			ticksSinceRequest = 0;
 			ticksSincePath = 0;
 			collisionTicks = 0;
@@ -755,11 +774,11 @@ public final class MovementController {
 		}
 		// Look-ahead : on vise le point le plus lointain (parmi les prochains) directement franchissable, pas le prochain nœud.
 		// Contrôle borné (4 candidats max, <= 14 blocs, géométrie en cache).
-		if (++ticksSinceLookahead >= replan) {
+		if (++ticksSinceLookahead >= Math.max(4, replan * 2)) {
 			ticksSinceLookahead = 0;
-			int far = Math.min(path.size() - 1, pathIndex + Math.max(1, cfg.navLookAheadNodes));
+			int far = Math.min(path.size() - 1, pathIndex + Math.max(1, Math.min(cfg.navLookAheadNodes, 6)));
 			int tested = 0;
-			for (int j = far; j > pathIndex && tested < 4; j--) {
+			for (int j = far; j > pathIndex && tested < 2; j--) {
 				tested++;
 				if (paths.isClearLine(state.level(), pos, NavPoints.vec(path.get(j)))) {
 					pathIndex = j;
