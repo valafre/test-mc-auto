@@ -41,6 +41,12 @@ public final class LocalNavigator {
 						   BlockPos blockedCell, boolean noSafeTrajectory, Vec3 nudgePoint, String reason,
 						   double clearDistance, double feetY, boolean pending) {}
 
+	/** Instantané lecture seule utilisé par le recorder d'analyse. Aucun calcul lourd n'est effectué ici. */
+	public record DebugState(double latestHeading, double committedHeading, double candidateHeading, double candidateScore,
+								double straightScore, double leftScore, double rightScore, double bestScore, double secondScore,
+								int candidateCount, long headingHoldRemaining, int clearSteps, double clearDistance, String reason,
+								boolean jump, boolean sprintOk) {}
+
 	private static final double LOOK_DISTANCE = 3.5;
 	/** Âge maximal (ticks, depuis le dépôt de la demande) d'un résultat encore exploitable. */
 	private static final int MAX_AGE_TICKS = 8;
@@ -58,12 +64,29 @@ public final class LocalNavigator {
 
 	// Engagement de cap : évite qu'une petite variation de score toutes les 2 ticks fasse alterner gauche/droite.
 	// On garde un cap tant qu'il reste praticable ; seul un vrai avantage ou une perte de sécurité force le changement.
-	private static final int HEADING_HOLD_TICKS = 6;
-	private static final double HEADING_SWITCH_DEGREES = 18.0;
-	private static final int HEADING_CLEAR_ADVANTAGE_STEPS = 2;
-	private static final double HEADING_ALIGNMENT_ADVANTAGE_DEGREES = 28.0;
+	private static final int HEADING_HOLD_TICKS = 10;
+	private static final double HEADING_SWITCH_DEGREES = 25.0;
+	private static final int HEADING_CLEAR_ADVANTAGE_STEPS = 3;
+	private static final double HEADING_ALIGNMENT_ADVANTAGE_DEGREES = 35.0;
+	/** Un seul ou deux ticks de baisse de clearance ne doivent pas provoquer un changement de côté. */
+	private int committedUnsafeTicks;
 	private double committedHeading = Double.NaN;
 	private long committedUntilTick = Long.MIN_VALUE / 2;
+
+	public DebugState debugState(long tick) {
+		LocalPlanner.DebugSnapshot snap = LocalPlanner.debugSnapshot();
+		LocalResult r = latest;
+		double latestHeading = r == null ? Double.NaN : r.heading();
+		int clearSteps = r == null ? 0 : r.clearSteps();
+		double clearDistance = r == null ? 0.0 : r.clearDistance();
+		String reason = r == null ? "-" : (r.reason() == null ? "-" : r.reason());
+		boolean jump = r != null && r.jump();
+		boolean sprintOk = r != null && r.sprintOk();
+		long hold = Math.max(0L, committedUntilTick - tick);
+		return new DebugState(latestHeading, committedHeading, snap.chosenHeading(), snap.bestScore(),
+			snap.straightScore(), snap.leftScore(), snap.rightScore(), snap.bestScore(), snap.secondScore(),
+			snap.candidateCount(), hold, clearSteps, clearDistance, reason, jump, sprintOk);
+	}
 
 	public void reset() {
 		generation++;
@@ -73,6 +96,7 @@ public final class LocalNavigator {
 		prevHeading = Double.NaN;
 		committedHeading = Double.NaN;
 		committedUntilTick = Long.MIN_VALUE / 2;
+		committedUnsafeTicks = 0;
 		requestTicks.clear();
 	}
 
@@ -85,11 +109,17 @@ public final class LocalNavigator {
 		ModConfig cfg = ModConfig.get();
 		Vec3 pos = state.position();
 		Level level = state.level();
-		if (!state.onGround() || guide.y > pos.y + cfg.navJumpHeight + 0.1 || guide.y < pos.y - 0.6) {
+		if (!state.onGround()) {
 			reset();
-			return null; // en l'air, ou le guide implique une montée / une chute délibérée : le chemin global s'en charge
+			return null; // en l'air : laisser le mouvement/physique finir le déplacement vertical
 		}
-		double gdist = Math.hypot(guide.x - pos.x, guide.z - pos.z);
+		// Une grande différence de Y ne doit pas faire perdre toute navigation locale.
+		// Le chemin global peut gérer la montée/descente, mais en attendant on continue à
+		// chercher une trajectoire HORIZONTALE sûre vers la cible au lieu de passer directement
+		// en NO_PATH et de figer le joueur.
+		boolean verticalOutsideLocal = guide.y > pos.y + cfg.navJumpHeight + 0.1 || guide.y < pos.y - 0.6;
+		Vec3 steeringGuide = verticalOutsideLocal ? new Vec3(guide.x, pos.y, guide.z) : guide;
+		double gdist = Math.hypot(steeringGuide.x - pos.x, steeringGuide.z - pos.z);
 		if (gdist < 0.4) {
 			return null;
 		}
@@ -113,7 +143,7 @@ public final class LocalNavigator {
 			|| tick - requestTick >= Math.max(1, cfg.navReplanTicks)
 			|| guideAtRequest != null && guideAtRequest.distanceToSqr(guide) > 1.0;
 		if (due) {
-			submit(state, guide, combat, params, tick);
+			submit(state, steeringGuide, combat, params, tick);
 		}
 
 		// 3. Choix : résultat du worker validé, sinon repli léger.
@@ -121,7 +151,7 @@ public final class LocalNavigator {
 		NavWorld live = service.live(level);
 		Steering s = fromLatest(state, live, pos, params, minSafe, tick);
 		if (s == null) {
-			s = fallback(state, live, pos, guide, params, minSafe);
+			s = fallback(state, live, pos, guide, params, minSafe, tick);
 		}
 		if (!s.pending() && !s.noSafeTrajectory()) {
 			prevHeading = s.headingDeg();
@@ -191,60 +221,92 @@ public final class LocalNavigator {
 		if (Double.isNaN(committedHeading)) {
 			committedHeading = candidateHeading;
 			committedUntilTick = tick + HEADING_HOLD_TICKS;
+			committedUnsafeTicks = 0;
 			prevHeading = candidateHeading;
 			return candidateHeading;
 		}
 
 		int currentClear = LocalPlanner.clearSteps(live, pos.x, pos.y, pos.z, committedHeading, minSafe, params);
 		double candidateDelta = Math.abs(wrap(candidateHeading - committedHeading));
+		int candidateClear = Math.max(0, latest == null ? 0 : latest.clearSteps());
 
-		// Si le cap actuel devient réellement dangereux, on change immédiatement.
-		if (currentClear < minSafe) {
+		// Une trajectoire engagée ne doit être abandonnée que pour un danger réel. Une simple baisse de marge
+		// transitoire ne doit pas recréer le gauche/droite/gauche du système précédent.
+		if (currentClear <= 0) {
+			committedUnsafeTicks++;
+		} else {
+			committedUnsafeTicks = 0;
+		}
+		boolean immediateDanger = currentClear <= 0 && candidateClear >= Math.max(1, minSafe);
+		boolean sustainedDanger = committedUnsafeTicks >= 2 && currentClear <= 1 && candidateClear >= Math.max(1, minSafe);
+		if (immediateDanger || sustainedDanger) {
 			committedHeading = candidateHeading;
 			committedUntilTick = tick + HEADING_HOLD_TICKS;
+			committedUnsafeTicks = 0;
 			prevHeading = committedHeading;
 			return committedHeading;
 		}
 
-		// Petite variation : pas de changement de côté.
+		// Petite variation : conserver le même cap, même si un nouveau résultat est légèrement différent.
 		if (candidateDelta < HEADING_SWITCH_DEGREES) {
 			prevHeading = committedHeading;
 			return committedHeading;
 		}
 
-		// Fenêtre d'engagement : on garde la décision, sauf nécessité de sécurité traitée ci-dessus.
+		// Fenêtre d'engagement : tant que le cap reste praticable, un nouveau chemin ne peut pas l'écraser.
 		if (tick < committedUntilTick) {
 			prevHeading = committedHeading;
 			return committedHeading;
 		}
 
-		int candidateClear = Math.max(0, latest == null ? 0 : latest.clearSteps());
 		double guideYaw = guide == null ? candidateHeading : LocalPlanner.yawTo(pos.x, pos.z, guide.x, guide.z);
 		double currentAlign = Math.abs(wrap(guideYaw - committedHeading));
 		double candidateAlign = Math.abs(wrap(guideYaw - candidateHeading));
 		boolean clearAdvantage = candidateClear >= currentClear + HEADING_CLEAR_ADVANTAGE_STEPS;
 		boolean alignmentAdvantage = candidateAlign + HEADING_ALIGNMENT_ADVANTAGE_DEGREES <= currentAlign && candidateClear >= minSafe;
+		boolean decisiveTurn = candidateAlign + 55.0 <= currentAlign && candidateClear >= minSafe + 3;
 
-		if (clearAdvantage || alignmentAdvantage) {
+		if (clearAdvantage || alignmentAdvantage || decisiveTurn) {
 			committedHeading = candidateHeading;
 			committedUntilTick = tick + HEADING_HOLD_TICKS;
+			committedUnsafeTicks = 0;
 		}
 		prevHeading = committedHeading;
 		return committedHeading;
 	}
 
 	/** Repli léger sur le thread Minecraft (un ou deux rollouts en cache) : cap vers le guide s'il est libre, sinon cap précédent. */
-	private Steering fallback(PlayerState state, NavWorld live, Vec3 pos, Vec3 guide, NavParams params, int minSafe) {
-		double guideYaw = LocalPlanner.yawTo(pos.x, pos.z, guide.x, guide.z);
+	private Steering fallback(PlayerState state, NavWorld live, Vec3 pos, Vec3 guide, NavParams params, int minSafe, long tick) {
 		int need = minSafe + 2;
-		if (LocalPlanner.clearSteps(live, pos.x, pos.y, pos.z, guideYaw, need, params) >= need) {
-			return new Steering(pointAlong(pos, guideYaw, LOOK_DISTANCE), guideYaw, true, need, false, false, null, false, null,
-				"-", need * params.sampleDistance(), pos.y, false);
+		// Tant qu'un cap est engagé et reste sûr, ne pas revenir vers la ligne directe au seul motif qu'un nouveau calcul
+		// n'est pas encore disponible. C'est ce qui supprimait les hésitations gauche/droite pendant LOCAL_PENDING.
+		if (!Double.isNaN(committedHeading)
+			&& LocalPlanner.clearSteps(live, pos.x, pos.y, pos.z, committedHeading, minSafe, params) >= minSafe) {
+			return new Steering(pointAlong(pos, committedHeading, LOOK_DISTANCE), committedHeading, true, minSafe, false, false, null, false,
+				null, "HOLD_COMMITTED", minSafe * params.sampleDistance(), pos.y, false);
 		}
 		if (!Double.isNaN(prevHeading)
 			&& LocalPlanner.clearSteps(live, pos.x, pos.y, pos.z, prevHeading, minSafe, params) >= minSafe) {
 			return new Steering(pointAlong(pos, prevHeading, LOOK_DISTANCE), prevHeading, true, minSafe, false, false, null, false,
-				null, "-", minSafe * params.sampleDistance(), pos.y, false);
+				null, "HOLD_PREVIOUS", minSafe * params.sampleDistance(), pos.y, false);
+		}
+		double guideYaw = LocalPlanner.yawTo(pos.x, pos.z, guide.x, guide.z);
+		if (LocalPlanner.clearSteps(live, pos.x, pos.y, pos.z, guideYaw, need, params) >= need) {
+			return new Steering(pointAlong(pos, guideYaw, LOOK_DISTANCE), guideYaw, true, need, false, false, null, false, null,
+				"GUIDE_FALLBACK", need * params.sampleDistance(), pos.y, false);
+		}
+		// Dernier repli très léger : pendant que le worker travaille, un joueur continue généralement dans le dernier bon axe
+		// ou corrige légèrement son cap. On teste quelques petites corrections sans lancer une nouvelle planification.
+		double anchor = !Double.isNaN(committedHeading) ? committedHeading : guideYaw;
+		for (double offset : new double[] {-22.0, 22.0, -40.0, 40.0}) {
+			double candidate = anchor + offset;
+			int clear = LocalPlanner.clearSteps(live, pos.x, pos.y, pos.z, candidate, need, params);
+			if (clear >= need) {
+				committedHeading = candidate;
+				committedUntilTick = tick + HEADING_HOLD_TICKS;
+				return new Steering(pointAlong(pos, candidate, LOOK_DISTANCE), candidate, true, clear, false, false, null, false, null,
+					"MICRO_FALLBACK", clear * params.sampleDistance(), pos.y, false);
+			}
 		}
 		return new Steering(null, guideYaw, false, 0, false, false, null, false, null, "PENDING", 0, pos.y, true);
 	}

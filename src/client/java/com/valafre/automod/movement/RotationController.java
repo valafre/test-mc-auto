@@ -40,6 +40,11 @@ public final class RotationController {
 
 	private final CameraRecorder recorder;
 	private Gaze gaze;
+	/** Priorité intra-tick des demandes de caméra : ENEMY > PATH > OTHER. */
+	private int gazePriority;
+	/** Petit bail de priorité pour éviter qu'un regard de combat valide soit perdu pendant 1-2 ticks à cause d'un appel PATH/OTHER. */
+	private int enemyLeaseTicks;
+	private static final int ENEMY_LEASE_TICKS = 5;
 
 	// Vitesse de la caméra (degrés/tick), conservée entre les ticks.
 	private float vYaw;
@@ -80,10 +85,7 @@ public final class RotationController {
 
 	/** Regarder {@code point} (taille de cible inconnue). */
 	public void lookAt(Vec3 point) {
-		if (com.valafre.automod.core.Debug.enabled()) {
-			com.valafre.automod.debug.CombatTrace.rotationWrite("OTHER", callerName(), point, gaze != null);
-		}
-		gaze = new Gaze(point, null, "OTHER");
+		setGaze(new Gaze(point, null, "OTHER"));
 	}
 
 	/**
@@ -91,10 +93,46 @@ public final class RotationController {
 	 * @param source étiquette (ENEMY, PATH...) pour l'enregistreur de debug
 	 */
 	public void lookAt(Vec3 point, AABB box, String source) {
-		if (com.valafre.automod.core.Debug.enabled()) {
-			com.valafre.automod.debug.CombatTrace.rotationWrite(source, callerName(), point, gaze != null);
+		setGaze(new Gaze(point, box, source == null ? "OTHER" : source));
+	}
+
+	private void setGaze(Gaze next) {
+		String source = next.source();
+		int nextPriority = sourcePriority(source);
+		boolean replaced = gaze != null;
+		// ENEMY garde la priorité pendant quelques ticks courts : cela couvre les transitions de LOS/ordonnancement sans
+		// empêcher une nouvelle demande ENEMY de mettre à jour immédiatement le point visé.
+		boolean enemyLease = enemyLeaseTicks > 0;
+		boolean accepted = !enemyLease && (gaze == null || nextPriority >= gazePriority);
+		if ("ENEMY".equals(source)) {
+			accepted = true;
+			enemyLeaseTicks = ENEMY_LEASE_TICKS;
 		}
-		gaze = new Gaze(point, box, source);
+		if (enemyLease && !"ENEMY".equals(source)) {
+			accepted = false;
+		}
+		if (com.valafre.automod.core.Debug.enabled() || recorder.isRecording()) {
+			com.valafre.automod.debug.CombatTrace.rotationWrite(source, callerName(), next.point(), replaced);
+		}
+		if (!accepted) {
+			// Une demande PATH/OTHER ne peut pas voler la caméra à une demande ENEMY
+			// déjà déposée pendant le même tick.
+			return;
+		}
+		gaze = next;
+		gazePriority = nextPriority;
+	}
+
+	private String gazeSource() {
+		return gaze == null ? "aucune" : gaze.source();
+	}
+
+	private static int sourcePriority(String source) {
+		return switch (source == null ? "OTHER" : source) {
+			case "ENEMY" -> 3;
+			case "PATH" -> 2;
+			default -> 1;
+		};
 	}
 
 	/** Diagnostic : classe.méthode qui a appelé lookAt (debug uniquement). */
@@ -108,6 +146,27 @@ public final class RotationController {
 	private String appliedSource = "aucune";
 	private Vec3 appliedPoint;
 
+	private float debugDesiredYaw;
+	private float debugDesiredPitch;
+	private float debugErrorYaw;
+	private float debugErrorPitch;
+	private float debugStepYaw;
+	private float debugStepPitch;
+	private float debugTremorYaw;
+	private float debugTremorPitch;
+	private double debugPendingFraction = 1.0;
+
+	public record DebugState(String gazeSource, String appliedSource, Vec3 appliedPoint, boolean locked,
+		float desiredYaw, float desiredPitch, float errorYaw, float errorPitch, float vYaw, float vPitch,
+		float stepYaw, float stepPitch, float targetVYaw, float targetVPitch, float tremorYaw, float tremorPitch,
+		double pendingFraction) {}
+
+	public DebugState debugState() {
+		return new DebugState(gaze == null ? appliedSource : gaze.source(), appliedSource, appliedPoint, locked,
+			debugDesiredYaw, debugDesiredPitch, debugErrorYaw, debugErrorPitch, vYaw, vPitch,
+			debugStepYaw, debugStepPitch, targetVYaw, targetVPitch, debugTremorYaw, debugTremorPitch, debugPendingFraction);
+	}
+
 	public String debugAppliedSource() {
 		return appliedSource;
 	}
@@ -119,18 +178,24 @@ public final class RotationController {
 	/** Plus de demande : la caméra finit son mouvement en décélérant (pas d'arrêt sec). */
 	public void cancel() {
 		gaze = null;
+		gazePriority = 0;
 	}
 
 	/** Remise à zéro complète (arrêt d'urgence). */
 	public void reset() {
 		gaze = null;
+		gazePriority = 0;
 		vYaw = 0;
 		vPitch = 0;
 		hasLast = false;
 		locked = false;
+		enemyLeaseTicks = 0;
 		pendingYaw = 0;
 		pendingPitch = 0;
 		applied = 1.0f;
+		debugDesiredYaw = debugDesiredPitch = debugErrorYaw = debugErrorPitch = 0;
+		debugStepYaw = debugStepPitch = debugTremorYaw = debugTremorPitch = 0;
+		debugPendingFraction = 1.0;
 	}
 
 	public boolean isActive() {
@@ -142,7 +207,10 @@ public final class RotationController {
 	// ========================================
 
 	public void update(PlayerState state) {
-		flushPending(state.player()); // le pas du tick précédent doit être complet avant de calculer l'écart restant
+		flushPending(state.player());
+		if (enemyLeaseTicks > 0) {
+			enemyLeaseTicks--;
+		} // le pas du tick précédent doit être complet avant de calculer l'écart restant
 		appliedSource = gaze == null ? "aucune" : gaze.source();
 		appliedPoint = gaze == null ? null : gaze.point();
 		ModConfig cfg = ModConfig.get();
@@ -166,6 +234,10 @@ public final class RotationController {
 		float errYaw = yawDelta(eye, point, yaw);
 		float errPitch = pitchDelta(eye, point, pitch);
 		double dist = Math.max(0.3, eye.distanceTo(point));
+		debugDesiredYaw = computeYaw(eye, point);
+		debugDesiredPitch = computePitch(eye, point);
+		debugErrorYaw = errYaw;
+		debugErrorPitch = errPitch;
 
 		// Très près de la cible (ou d'un point de chemin), l'angle jusqu'au point change de 100° pour quelques centimètres :
 		// on atténue puis on fige la caméra plutôt que de la laisser balayer d'un côté à l'autre.
@@ -237,7 +309,16 @@ public final class RotationController {
 				vYaw += dvYaw;
 				vPitch += dvPitch;
 				float speed = (float) Math.hypot(vYaw, vPitch);
-				float peak = "ENEMY".equals(gaze.source()) ? cfg.camPeakSpeedDeg : Math.min(cfg.camPeakSpeedDeg, WALK_PEAK_DEG);
+				float peak;
+				if ("ENEMY".equals(gaze.source())) {
+					// Les grands changements de cible peuvent être rapides, mais la vitesse reste progressive :
+					// une cible derrière peut être rattrapée sans snap de 180°.
+					float demand = Math.abs(errYaw);
+					float extra = Math.min(7.0f, Math.max(0.0f, (demand - 75.0f) * 0.06f));
+					peak = cfg.camPeakSpeedDeg + extra;
+				} else {
+					peak = Math.min(cfg.camPeakSpeedDeg, WALK_PEAK_DEG);
+				}
 				if (speed > peak) { // plafond sur la norme : les deux axes restent cohérents
 					float scale = peak / speed;
 					vYaw *= scale;
@@ -288,6 +369,11 @@ public final class RotationController {
 		targetVPitch = 0;
 		hasLast = false;
 		locked = true;
+		debugStepYaw = vYaw;
+		debugStepPitch = vPitch;
+		debugTremorYaw = 0;
+		debugTremorPitch = 0;
+		debugPendingFraction = applied;
 		apply(player, vYaw, vPitch, ModConfig.get().smoothFrameRotation);
 		recorder.record(gaze.source(), yaw, pitch, errYaw, errPitch, dist, 3.0f, true, vYaw, vPitch, vYaw, vPitch);
 		gaze = null;

@@ -28,10 +28,9 @@ public final class AttackTargetTask extends Task {
 	private static final double CLOSE_BACK_DISTANCE = 1.1;
 
 	private static final int WALL_TICKS_BEFORE_DETOUR = 3;
-	private static final double CAMERA_LAG_STOP_DEG = 80.0;
-	private static final double LOOK_ENTER_DISTANCE = 6.0;
-	private static final double LOOK_EXIT_DISTANCE = 8.0;
-	private static final int KEEP_LOOK_TICKS = 3;
+	private static final double LOOK_ENTER_DISTANCE = 8.0;
+	private static final double LOOK_EXIT_DISTANCE = 10.0;
+	private static final int KEEP_LOOK_TICKS = 6;
 	private static final double KEEP_LOOK_MAX_DISTANCE = 12.0;
 	private static final int STUCK_TICKS = 40;
 	private static final int UNSTICK_DURATION = 30;
@@ -47,7 +46,6 @@ public final class AttackTargetTask extends Task {
 	private int detourTicks;
 	private boolean followDown;
 	private int sightLostTicks;
-	private boolean lastLagStop;
 	private boolean lookEnemy;
 	private boolean dbgDetour;
 	private boolean dbgWaitCam;
@@ -93,10 +91,13 @@ public final class AttackTargetTask extends Task {
 		boolean seen = sight || recentlySaw;
 		if (holdPosition) {
 			lookEnemy = true;
+		} else if (sight) {
+			// Une cible réellement visible reste la référence de caméra pendant le combat. Le chemin peut encore piloter les touches.
+			lookEnemy = true;
 		} else if (lookEnemy) {
-			lookEnemy = seen && (info.distance() <= LOOK_EXIT_DISTANCE || straight);
+			lookEnemy = recentlySaw && (info.distance() <= LOOK_EXIT_DISTANCE || straight);
 		} else {
-			lookEnemy = sight && (info.distance() <= LOOK_ENTER_DISTANCE || straight);
+			lookEnemy = recentlySaw && info.distance() <= LOOK_ENTER_DISTANCE;
 		}
 		if (lookEnemy) {
 			f.rotation().lookAt(aim, target.getBoundingBox(), "ENEMY");
@@ -119,19 +120,17 @@ public final class AttackTargetTask extends Task {
 			if (detour) {
 				detourTicks--;
 			}
-			// Caméra en retard de plus de 55° sur la cible : on cesse d'avancer le temps de la rattraper, au lieu de courir
-			// pendant que l'écran tourne en rond (la cible tourne autour de nous plus vite que la caméra ne la suit).
 			double lag = Math.abs(com.valafre.automod.movement.RotationController.yawDelta(
 				f.player().eyePosition(), target.position(), f.player().yaw()));
-			boolean waitForCamera = lookEnemy && sight && !detour && lag > CAMERA_LAG_STOP_DEG && info.distance() > 2.5;
+			// Ne jamais immobiliser complètement le joueur simplement parce que la caméra rattrape une cible.
+			// Un humain continuerait à se repositionner / contourner pendant qu'il ramène son regard.
+			boolean waitForCamera = false;
 			boolean close = sight && !detour && info.distance() <= cfg.approachDistance + CLOSE_ZONE_MARGIN;
 			closeCombat = close;
 			dbgDetour = detour;
-			dbgWaitCam = waitForCamera;
+			dbgWaitCam = false;
 			dbgLag = lag;
-			if (waitForCamera) {
-				lastLagStop = true; // aucune touche de déplacement ce tick : la caméra rattrape
-			} else if (close) {
+			if (close) {
 				// Au contact : on avance en continu vers la cible (pas d'arrêt pour frapper), sans balayer l'écran.
 				boolean ok = f.movement().combatApproach(f.player(), owner(), target.position(), target.getBoundingBox().getCenter(),
 					info.distance(), CLOSE_BACK_DISTANCE, cfg.combatMinDistance);
@@ -169,7 +168,7 @@ public final class AttackTargetTask extends Task {
 		if (sneak && !followDown && unstickTicks == 0 && !f.movement().isUnsticking() && (holdPosition || closeCombat)) {
 			f.input().request(owner(), Key.SNEAK, true);
 		}
-		if (com.valafre.automod.core.Debug.enabled()) { // diagnostic : l'intention de combat de ce tick
+		if (com.valafre.automod.core.Debug.enabled() || f.recorder().isRecording()) { // diagnostic uniquement
 			com.valafre.automod.debug.CombatTrace.combatPosition(positioner.debugChosen(), positioner.debugAgeTicks(),
 				positioner.debugReevaluated(), positioner.debugTargetAtEval(), dbgChoseCalled);
 			com.valafre.automod.debug.CombatTrace.taskTarget(target, sight, String.format(java.util.Locale.ROOT,

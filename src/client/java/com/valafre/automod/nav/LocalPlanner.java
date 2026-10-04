@@ -1,5 +1,7 @@
 package com.valafre.automod.nav;
 
+import net.minecraft.core.BlockPos;
+
 import java.util.ArrayList;
 import java.util.List;
 
@@ -32,6 +34,17 @@ public final class LocalPlanner {
 						   double vertical, String reason) {}
 
 	private record Candidate(double heading, double offset, Rollout r, double score) {}
+
+	public record DebugSnapshot(long requestId, double guideYaw, double chosenHeading, double chosenOffset,
+		double bestScore, double secondScore, double straightScore, double leftScore, double rightScore,
+		int candidateCount, int testedTiers, int rollouts, boolean noSafe, double deepestClear) {}
+
+	private static volatile DebugSnapshot debugSnapshot =
+		new DebugSnapshot(-1, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, Double.NaN, 0, 0, 0, false, 0);
+
+	public static DebugSnapshot debugSnapshot() {
+		return debugSnapshot;
+	}
 
 	private static double wrap(double deg) {
 		double d = deg % 360.0;
@@ -80,17 +93,23 @@ public final class LocalPlanner {
 		boolean prevCompatible = !hasPrev || Math.abs(wrap(guideYaw - req.prevHeading())) < 25;
 		if (prevCompatible && straight.clear == steps && straight.comfort >= 0.9
 			&& mobility(w, straight.ex, straight.ey, straight.ez, guideYaw, stepLen, p) > 0) {
+			debugSnapshot = new DebugSnapshot(req.id(), guideYaw, guideYaw, 0,
+				baseScore(req, p, steps, gdist, guideYaw, 0, straight), Double.NaN,
+				baseScore(req, p, steps, gdist, guideYaw, 0, straight), Double.NaN, Double.NaN,
+				1, 1, rollouts[0], false, straight.clear);
 			return finish(req, guideYaw, steps, straight, t0, checks0, rollouts[0]);
 		}
 
 		List<Candidate> cands = new ArrayList<>();
 		Rollout deepest = straight;
 		List<Double> tried = new ArrayList<>();
+		int testedTiers = 0;
 		tried.add(0.0);
 		if (straight.clear >= safeSteps) {
 			cands.add(new Candidate(guideYaw, 0, straight, baseScore(req, p, steps, gdist, guideYaw, 0, straight)));
 		}
 		for (int tier = 0; tier < TIERS.length; tier++) {
+			testedTiers = tier + 1;
 			List<Double> headings = new ArrayList<>();
 			for (double off : TIERS[tier]) {
 				headings.add(guideYaw + off);
@@ -138,23 +157,85 @@ public final class LocalPlanner {
 					}
 				}
 			}
+			double secondScore = -1e9;
+			double straightScore = Double.NaN;
+			double leftScore = Double.NaN;
+			double rightScore = Double.NaN;
+			for (Candidate c : cands) {
+				double s = c.score + futureScore(req, p, steps, c, stepLen);
+				if (best == null || c != best) secondScore = Math.max(secondScore, s);
+				if (Math.abs(c.offset) < 1.0E-6) straightScore = Math.max(Double.isNaN(straightScore) ? -1e9 : straightScore, s);
+				else if (c.offset < 0) leftScore = Math.max(Double.isNaN(leftScore) ? -1e9 : leftScore, s);
+				else rightScore = Math.max(Double.isNaN(rightScore) ? -1e9 : rightScore, s);
+			}
+			if (best != null) bestScore = best.score + futureScore(req, p, steps, best, stepLen);
+			debugSnapshot = new DebugSnapshot(req.id(), guideYaw, best == null ? Double.NaN : best.heading,
+				best == null ? Double.NaN : best.offset, bestScore, secondScore, straightScore, leftScore, rightScore,
+				cands.size(), testedTiers, rollouts[0], false, deepest.clear);
 			return finish(req, best.heading - best.offset, steps, best.r, best.offset, t0, checks0, rollouts[0]);
 		}
-		// AUCUNE trajectoire sûre : pas de cap vers l'obstacle ; seulement une petite correction de position sûre.
+
+		// AUCUNE trajectoire sûre : on refuse toujours d'avancer vers le danger,
+		// mais on ne doit pas pour autant rester planté au bord du vide.
+		// Pour VOID, on cherche une petite trajectoire d'échappement locale, même si elle
+		// ne remplit pas la marge normale : l'objectif est de sortir progressivement de
+		// la zone dangereuse, pas de considérer le bord comme un mur définitif.
 		int needed = (int) Math.ceil(NUDGE_MIN_DISTANCE / stepLen);
 		int bestClear = 0;
+		double bestEscapeScore = -Double.MAX_VALUE;
 		double nudge = Double.NaN;
-		for (double off : new double[] {85, -85, 120, -120, 150, -150, 180}) {
-			Rollout n = rollout(w, req.x(), req.y(), req.z(), guideYaw + off, needed + 2, stepLen, margin, p.jumpHeight(), false, null);
-			rollouts[0]++;
-			if (n.clear >= needed && n.clear > bestClear) {
-				bestClear = n.clear;
-				nudge = guideYaw + off;
+
+		if ("VOID".equals(deepest.reason)) {
+			double blockedAway = guideYaw;
+			if (deepest.blocked != NavGeometry.NO_BLOCK) {
+				BlockPos blockedPos = BlockPos.of(deepest.blocked);
+				double bx = blockedPos.getX() + 0.5;
+				double bz = blockedPos.getZ() + 0.5;
+				double towardBlocked = yawTo(req.x(), req.z(), bx, bz);
+				blockedAway = towardBlocked + 180.0;
+			}
+			// 24 directions, mais uniquement dans le cas réellement utile (bord du vide).
+			// On favorise le côté opposé au bord, puis la progression vers le guide et enfin
+			// la continuité avec le cap précédent.
+			for (int i = 0; i < 24; i++) {
+				double heading = blockedAway + i * 15.0;
+				Rollout n = rollout(w, req.x(), req.y(), req.z(), heading, Math.max(needed + 2, 4),
+					stepLen, margin, p.jumpHeight(), false, null);
+				rollouts[0]++;
+				if (n.clear <= 0) {
+					continue;
+				}
+				double progress = Math.cos(Math.toRadians(wrap(heading - guideYaw)));
+				double continuity = Double.isNaN(req.prevHeading()) ? 0.0
+					: Math.cos(Math.toRadians(wrap(heading - req.prevHeading())));
+				double score = n.clear * 4.0 + progress * 1.5 + continuity * 0.75;
+				if (n.clear > bestClear || (n.clear == bestClear && score > bestEscapeScore)) {
+					bestClear = n.clear;
+					bestEscapeScore = score;
+					nudge = heading;
+				}
+			}
+		} else {
+			for (double off : new double[] {85, -85, 120, -120, 150, -150, 180}) {
+				double heading = guideYaw + off;
+				Rollout n = rollout(w, req.x(), req.y(), req.z(), heading, needed + 2, stepLen, margin, p.jumpHeight(), false, null);
+				rollouts[0]++;
+				if (n.clear >= needed && n.clear > bestClear) {
+					bestClear = n.clear;
+					nudge = heading;
+				}
 			}
 		}
+
+		debugSnapshot = new DebugSnapshot(req.id(), guideYaw, Double.NaN, Double.NaN, Double.NaN, Double.NaN,
+			Double.NaN, Double.NaN, Double.NaN, cands.size(), testedTiers, rollouts[0], true, deepest.clear);
+		DebugSnapshot snap = debugSnapshot;
+		String recoveryReason = !Double.isNaN(nudge) && "VOID".equals(deepest.reason) ? "VOID_ESCAPE" : deepest.reason;
 		return new LocalResult(req.id(), req.generation(), true, guideYaw, deepest.clear, deepest.clear * stepLen, false, false,
-			deepest.blocked, deepest.reason, nudge, req.y(), (System.nanoTime() - t0) / 1.0E6,
-			(w instanceof NavGrid g ? g.checks() : 0) - checks0, rollouts[0], System.currentTimeMillis());
+			deepest.blocked, recoveryReason, nudge, req.y(), (System.nanoTime() - t0) / 1.0E6,
+			(w instanceof NavGrid g ? g.checks() : 0) - checks0, rollouts[0], System.currentTimeMillis(),
+			snap.bestScore(), snap.secondScore(), snap.straightScore(), snap.leftScore(), snap.rightScore(),
+			snap.candidateCount(), snap.testedTiers());
 	}
 
 	private static LocalResult finish(LocalRequest req, double guideYaw, int steps, Rollout r, long t0, long checks0, int rollouts) {
@@ -166,9 +247,12 @@ public final class LocalPlanner {
 		boolean jump = r.jumpStep > 0 && r.jumpStep <= 4;
 		boolean sprintOk = r.clear == steps && steps >= 12 && r.comfort >= 0.85 && Math.abs(offset) <= 15 && r.jumpStep < 0;
 		NavWorld w = req.world();
+		DebugSnapshot snap = debugSnapshot;
 		return new LocalResult(req.id(), req.generation(), false, guideYaw + offset, r.clear, r.clear * clampStep(req.params()),
 			jump, sprintOk, r.blocked, "-", Double.NaN, r.ey, (System.nanoTime() - t0) / 1.0E6,
-			(w instanceof NavGrid g ? g.checks() : 0) - checks0, rollouts, System.currentTimeMillis());
+			(w instanceof NavGrid g ? g.checks() : 0) - checks0, rollouts, System.currentTimeMillis(),
+			snap.bestScore(), snap.secondScore(), snap.straightScore(), snap.leftScore(), snap.rightScore(),
+			snap.candidateCount(), snap.testedTiers());
 	}
 
 	private static double baseScore(LocalRequest req, NavParams p, int steps, double gdist, double heading, double offset, Rollout r) {

@@ -69,7 +69,11 @@ public final class MovementController {
 	/** Instantané de la navigation : point global, point exécuté, validité, sûreté, génération du chemin... */
 	public record DebugState(Vec3 globalWaypoint, Vec3 executedPoint, boolean waypointValid, boolean safe, boolean noSafe,
 							 String refusal, int pathGeneration, boolean lineClearCache, boolean pathComplete,
-							 int pathSize, int pathIndex, boolean reachableEstimate, long lastCallTick) {}
+							 int pathSize, int pathIndex, boolean reachableEstimate, long lastCallTick, String status,
+							 double localHeading, double committedHeading, double candidateHeading, double candidateScore,
+							 double straightScore, double leftScore, double rightScore, double bestScore, double secondScore,
+							 int candidateCount, long headingHoldRemaining, int clearSteps, double clearDistance, String reason,
+							 boolean jump, boolean sprintOk, String movementMode, String cameraMode, String job, double groundY, int targetId) {}
 
 	private Vec3 dbgGlobalWaypoint;
 	private Vec3 dbgExecutedPoint;
@@ -81,8 +85,15 @@ public final class MovementController {
 
 	public DebugState debugState() {
 		boolean reachable = lineClear || (pathComplete && !path.isEmpty());
+		long tick = lastCallTime == Long.MIN_VALUE / 2 ? 0 : lastCallTime;
+		LocalNavigator.DebugState localState = local.debugState(tick);
 		return new DebugState(dbgGlobalWaypoint, dbgExecutedPoint, dbgWaypointValid, dbgSafe, dbgNoSafe, dbgRefusal,
-			pathGeneration, lineClear, pathComplete, path.size(), pathIndex, reachable, lastCallTime);
+			pathGeneration, lineClear, pathComplete, path.size(), pathIndex, reachable, lastCallTime, lastStatus,
+			localState.latestHeading(), localState.committedHeading(), localState.candidateHeading(), localState.candidateScore(),
+			localState.straightScore(), localState.leftScore(), localState.rightScore(), localState.bestScore(), localState.secondScore(),
+			localState.candidateCount(), localState.headingHoldRemaining(), localState.clearSteps(), localState.clearDistance(), localState.reason(),
+				localState.jump(), localState.sprintOk(),
+			lastMovementMode, lastCameraMode, dbgLastResult, NavDebug.ground, NavDebug.targetId);
 	}
 
 	// Déblocage rapide : fenêtre courte de progrès, escalade de manoeuvres, cases à éviter.
@@ -114,11 +125,23 @@ public final class MovementController {
 	private int forbidLineTicks;
 	private boolean intent;
 	private long lastCallTime = Long.MIN_VALUE / 2;
+	private String lastMovementMode = "-";
+	private String lastCameraMode = "-";
+	/** Dernière trajectoire locale réellement exécutée et encore récente : permet de continuer pendant un calcul worker. */
+	private Vec3 lastSafeWaypoint;
+	private long lastSafeWaypointTick = Long.MIN_VALUE / 2;
+	private String lastSafeOwner;
+	private double lastSafeHeading = Double.NaN;
+	private long lastSafeHeadingTick = Long.MIN_VALUE / 2;
+	private static final int PENDING_KEEP_TICKS = 10;
 
 	public MovementController(InputController input, RotationController rotation, PathController paths) {
 		this.input = input;
 		this.rotation = rotation;
 		this.paths = paths;
+		// Même mémoire de navigation pour l'approche générale et le combat : une transition de mode ne doit pas faire
+		// oublier instantanément le cap engagé puis choisir l'autre côté.
+		this.combatLocal = this.local;
 	}
 
 	// ========================================
@@ -250,9 +273,39 @@ public final class MovementController {
 		publishNav(state, steer, refusal, waypoint, globalWaypoint, controlLook, cameraLocked);
 		dbgRefusal = refusal == null ? "-" : refusal;
 		dbgExecutedPoint = refusal == null ? waypoint : nudge;
+		if ("LOCAL_PENDING".equals(refusal)) {
+			// Un calcul local en arrière-plan ne doit pas arrêter un joueur qui dispose encore d'une trajectoire
+			// récemment validée. D'abord on réutilise le waypoint exact, puis on réutilise son cap avec un
+			// contrôle local plus court et moins strict : le worker aura normalement répondu avant que cette
+			// fenêtre de grâce expire. Cette voie évite les pauses artificielles de quelques ticks.
+			Vec3 cached = lastSafeWaypoint;
+			boolean cacheFresh = cached != null && now - lastSafeWaypointTick <= PENDING_KEEP_TICKS
+				&& (lastSafeOwner == null || lastSafeOwner.equals(owner));
+			if (cacheFresh && Walkability.segmentWalkable(state.level(), pos, cached, 0.0, false)) {
+				waypoint = cached;
+				refusal = null;
+				lastStatus = "MOVING (calcul local en cours, trajectoire conservée)";
+			} else if (!Double.isNaN(lastSafeHeading) && now - lastSafeHeadingTick <= PENDING_KEEP_TICKS) {
+				var pendingParams = NavService.params(false);
+				var pendingWorld = NavService.get().live(state.level());
+				int pendingClear = com.valafre.automod.nav.LocalPlanner.clearSteps(pendingWorld, pos.x, pos.y, pos.z, lastSafeHeading, 1, pendingParams);
+				Vec3 headingPoint = pointAlong(pos, lastSafeHeading, Math.max(1.5, LOOK_NEAR + 0.2));
+				if (pendingClear >= 1 || Walkability.segmentWalkable(state.level(), pos, headingPoint, 0.0, false)) {
+					waypoint = headingPoint;
+					refusal = null;
+					lastStatus = "MOVING (calcul local en cours, cap précédent conservé)";
+				}
+			}
+		}
+		dbgRefusal = refusal == null ? "-" : refusal;
 		if (refusal != null) {
 			return refuseMove(state, owner, dest, waypoint, steer, refusal, nudge, waypointValid, cameraLocked);
 		}
+		lastSafeWaypoint = waypoint;
+		lastSafeWaypointTick = now;
+		lastSafeOwner = owner;
+		lastSafeHeading = RotationController.computeYaw(pos, waypoint);
+		lastSafeHeadingTick = now;
 		boolean maneuvering = updateUnstuck(state, owner, waypoint, horizontal);
 
 		// Jamais de marche arrière / de côté prolongée : si le point à rejoindre est trop loin de l'axe du regard, on se tourne
@@ -293,6 +346,8 @@ public final class MovementController {
 	/** Instantané pour le HUD / la trace [NAV] (lecture seule, aucune décision). */
 	private void publishNav(PlayerState state, LocalNavigator.Steering steer, String refusal, Vec3 executed, Vec3 global,
 							boolean controlLook, boolean cameraLocked) {
+		lastCameraMode = cameraLocked ? "ENEMY" : controlLook ? "PATH" : "ENEMY";
+		lastMovementMode = refusal != null ? "REFUS" : controlLook ? "FORWARD" : "STRAFE";
 		NavDebug.pathNodes = path.size() - pathIndex;
 		NavDebug.replanTicks = ModConfig.get().navReplanTicks;
 		NavDebug.job = dbgLastResult;
@@ -331,6 +386,11 @@ public final class MovementController {
 		waypointValidationTick = Long.MIN_VALUE / 2;
 		pathGoal = null;
 		lastRequestedDestination = null;
+		lastSafeWaypoint = null;
+		lastSafeWaypointTick = Long.MIN_VALUE / 2;
+		lastSafeOwner = null;
+		lastSafeHeading = Double.NaN;
+		lastSafeHeadingTick = Long.MIN_VALUE / 2;
 		ticksSincePath = Integer.MAX_VALUE / 2;
 	}
 
@@ -585,6 +645,9 @@ public final class MovementController {
 		rightOn = false;
 		committedSide = 0;
 		committedSideUntil = Long.MIN_VALUE / 2;
+		combatOrbitSide = 0;
+		combatOrbitUntil = Long.MIN_VALUE / 2;
+		combatOrbitTargetHash = 0;
 		windowStart = null;
 		windowTicks = 0;
 		stuckWindows = 0;
@@ -618,10 +681,17 @@ public final class MovementController {
 	private boolean combatForward;
 	private boolean combatBack;
 
-	private final LocalNavigator combatLocal = new LocalNavigator();
+	private final LocalNavigator combatLocal;
 	private boolean combatFwdKey;
 	private boolean combatLeftKey;
 	private boolean combatRightKey;
+	private double combatLastHeading = Double.NaN;
+	private long combatLastSafeTick = Long.MIN_VALUE / 2;
+	private int combatOrbitSide;
+	private long combatOrbitUntil = Long.MIN_VALUE / 2;
+	private int combatOrbitTargetHash;
+	private static final int COMBAT_ORBIT_HOLD_TICKS = 24;
+	private static final double COMBAT_ORBIT_ANGLE = 55.0;
 
 	// Engagement latéral : évite qu'un cap proche de l'axe 0 fasse alterner gauche/droite à chaque replan.
 	private int committedSide; // -1 gauche, +1 droite, 0 neutre
@@ -657,9 +727,18 @@ public final class MovementController {
 			if (st != null) {
 				safe = st.safe();
 				jump = st.jump();
-				hold = st.pending(); // planificateur local en attente : on ne bouge pas quelques ticks, ce n'est pas un refus
-				if (hold) {
-					safe = true;
+				hold = st.pending();
+				if (hold && !Double.isNaN(combatLastHeading) && state.level().getGameTime() - combatLastSafeTick <= PENDING_KEEP_TICKS) {
+					Vec3 cached = pointAlong(state.position(), combatLastHeading, 1.4);
+					if (Walkability.segmentWalkable(state.level(), state.position(), cached, 0.0, false)) {
+						heading = combatLastHeading;
+						hold = false;
+						safe = true;
+					}
+				}
+				if (!hold && safe) {
+					combatLastHeading = heading;
+					combatLastSafeTick = state.level().getGameTime();
 				}
 			}
 			double delta = Math.toRadians(net.minecraft.util.Mth.wrapDegrees((float) (heading - state.yaw())));
@@ -673,11 +752,63 @@ public final class MovementController {
 					leftKey = false;
 					rightKey = false;
 				}
-				sprint = st != null && st.sprintOk() && cfg.useSprint && fwdKey && fwd > 0.9;
+				sprint = st != null && st.sprintOk() && cfg.useSprint && fwdKey && fwd > 0.55 && !combatBack;
+			}
+		} else if (!combatBack) {
+			// Zone de combat : un humain continue généralement à se déplacer latéralement autour d'un mob au lieu de
+			// rester immobile entre deux coups. La direction d'orbite reste engagée et ne change que si elle devient dangereuse.
+			long now = state.level().getGameTime();
+			int targetHash = (int) Math.round((targetPos.x * 31.0 + targetPos.z * 17.0) * 10.0);
+			if (combatOrbitSide == 0 || targetHash != combatOrbitTargetHash) {
+				combatOrbitTargetHash = targetHash;
+				combatOrbitSide = ((targetHash & 1) == 0) ? 1 : -1;
+				combatOrbitUntil = now + COMBAT_ORBIT_HOLD_TICKS;
+			}
+			double targetYaw = RotationController.computeYaw(state.position(), targetPos);
+			double orbitHeading = targetYaw + combatOrbitSide * COMBAT_ORBIT_ANGLE;
+			Vec3 orbitPoint = pointAlong(state.position(), orbitHeading, 1.3);
+			if (!Walkability.segmentWalkable(state.level(), state.position(), orbitPoint, 0.0, false)) {
+				combatOrbitSide = -combatOrbitSide;
+				orbitHeading = targetYaw + combatOrbitSide * COMBAT_ORBIT_ANGLE;
+				orbitPoint = pointAlong(state.position(), orbitHeading, 1.3);
+			}
+			if (Walkability.segmentWalkable(state.level(), state.position(), orbitPoint, 0.0, false)) {
+				double delta = Math.toRadians(net.minecraft.util.Mth.wrapDegrees((float) (orbitHeading - state.yaw())));
+				double fwd = Math.cos(delta);
+				double side = Math.sin(delta);
+				fwdKey = hysteresis(combatFwdKey, fwd);
+				rightKey = hysteresis(combatRightKey, side);
+				leftKey = hysteresis(combatLeftKey, -side);
+				if (leftKey && rightKey) {
+					leftKey = false;
+					rightKey = false;
+				}
+				combatLastHeading = orbitHeading;
+				combatLastSafeTick = now;
+				safe = true;
+				lastStatus = "COMBAT (orbite" + (combatOrbitSide < 0 ? ", gauche)" : ", droite)");
+			} else {
+				safe = false;
 			}
 		} else {
-			combatLocal.reset();
+			// En dessous de la distance minimale, on recule si nécessaire mais on conserve une petite composante latérale.
+			long now = state.level().getGameTime();
+			if (combatOrbitSide == 0) {
+				combatOrbitSide = 1;
+			}
+			double targetYaw = RotationController.computeYaw(state.position(), targetPos);
+			double orbitHeading = targetYaw + combatOrbitSide * 90.0;
+			double delta = Math.toRadians(net.minecraft.util.Mth.wrapDegrees((float) (orbitHeading - state.yaw())));
+			double side = Math.sin(delta);
+			rightKey = hysteresis(combatRightKey, side);
+			leftKey = hysteresis(combatLeftKey, -side);
+			if (leftKey && rightKey) {
+				leftKey = false;
+				rightKey = false;
+			}
+			combatLastSafeTick = now;
 		}
+
 		combatFwdKey = fwdKey;
 		combatLeftKey = leftKey;
 		combatRightKey = rightKey;
@@ -959,7 +1090,7 @@ public final class MovementController {
 
 		// On lève le pied (pas de sprint) juste avant un virage serré du chemin, comme un joueur qui anticipe.
 		boolean sharpTurn = cfg.turnSlowdown && len < 2.5 && turnFactor(pos) > 0.55;
-		boolean sprint = cfg.useSprint && forwardOn && fwd > 0.9 && distToDest > cfg.slowDistance && !sharpTurn
+		boolean sprint = cfg.useSprint && forwardOn && fwd > 0.75 && distToDest > cfg.slowDistance && !sharpTurn
 			&& steerSprintOk;
 		input.request(owner, Key.SPRINT, sprint);
 
@@ -988,6 +1119,11 @@ public final class MovementController {
 	private static boolean stepAhead(PlayerState state, double dx, double dz) {
 		double rise = Walkability.riseAhead(state.level(), state.position(), dx, dz);
 		return rise > 0.6 && rise <= JUMP_REACH;
+	}
+
+	private static Vec3 pointAlong(Vec3 pos, double headingDeg, double distance) {
+		double rad = Math.toRadians(headingDeg);
+		return new Vec3(pos.x - Math.sin(rad) * distance, pos.y, pos.z + Math.cos(rad) * distance);
 	}
 
 	private static boolean hysteresis(boolean current, double value) {

@@ -14,7 +14,6 @@ import com.valafre.automod.movement.RotationController;
 import com.valafre.automod.targeting.TargetInfo;
 import com.valafre.automod.targeting.TargetSelector;
 import com.valafre.automod.task.AttackTargetTask;
-import com.valafre.automod.task.LookAtTask;
 import com.valafre.automod.task.MoveToPositionTask;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.monster.EnderMan;
@@ -62,7 +61,6 @@ public final class VoidgloomModule extends AbstractModule {
 	private double hudMaxHp = -1;
 	private int foreignBosses;
 	private boolean targetIsBoss;       // false : Enderman normal farmé pour faire apparaître le boss
-	private int reactionTicks;          // délai de réaction humain avant d'agir sur une nouvelle cible
 	private int bossCheckTimer;
 	private int retargetAccum;
 	private boolean pressMode;          // la position choisie doit TOUCHER une face du beacon
@@ -76,11 +74,22 @@ public final class VoidgloomModule extends AbstractModule {
 	private int stuckTicks;
 	private double bestDistance = Double.MAX_VALUE;   // plus petite distance atteinte vers la cible (suivi de progression)
 	private int noProgressTicks;
-	private int acquiredTicks;         // ticks depuis l'acquisition de la cible
+	private int acquiredTicks;
+	/** Récupération du mouvement sans abandonner une cible encore visible/pertinente. */
+	private int movementRecoveryCooldown;
+	private int visibleTargetGraceTicks;         // ticks depuis l'acquisition de la cible
 	private int noLosTicks;            // ticks consécutifs sans ligne de vue sur la cible
+	private int outOfRangeTicks;       // tolérance lorsque la cible engagée dépasse momentanément la distance de conservation
+	private static final int TARGET_OUT_OF_RANGE_GRACE_TICKS = 40; // 2 s à 20 TPS
 	private long clock;
 	private final java.util.Map<Integer, Long> skipped = new java.util.HashMap<>(); // cibles abandonnées (id -> fin d'exclusion)
 	private boolean holdPosition;       // vrai après un repositionnement tant que la mécanique existe
+	/** Boucle de farm : une cible morte est finalisée une seule fois, puis le scan reprend immédiatement. */
+	private enum FarmPhase { IDLE, SEARCHING, ENGAGING, FINISHING_TARGET, BOSS_INTERRUPT }
+	private FarmPhase farmPhase = FarmPhase.IDLE;
+	private long farmCycles;
+	private long lastCompletedTick = Long.MIN_VALUE / 2;
+	private int lastCompletedTargetId = -1;
 
 	@Override
 	public String id() {
@@ -93,7 +102,7 @@ public final class VoidgloomModule extends AbstractModule {
 			return "en attente : \"" + ModConfig.get().slayerScoreboardKeyword + "\" absent du scoreboard";
 		}
 		String cible = target == null ? " (aucune cible)" : targetIsBoss ? " (cible : BOSS)" : " (cible : Enderman)";
-		return fsm.current() + cible + " | Enderman vus: " + endermenSeen + ", à farmer: " + mobsSeen + ", Voidgloom: " + bossesSeen
+		return fsm.current() + cible + " | Farm: " + farmPhase + " #" + farmCycles + " | Enderman vus: " + endermenSeen + ", à farmer: " + mobsSeen + ", Voidgloom: " + bossesSeen
 			+ (foreignBosses > 0 ? " (+" + foreignBosses + " d'autres joueurs ignorés)" : "");
 	}
 
@@ -203,6 +212,7 @@ public final class VoidgloomModule extends AbstractModule {
 	private void resetState() {
 		target = null;
 		noLosTicks = 0;
+		outOfRangeTicks = 0;
 		engagedTicks = -1;
 		engageStartRatio = -1;
 		acquiredTicks = 0;
@@ -210,8 +220,13 @@ public final class VoidgloomModule extends AbstractModule {
 		stuckTicks = 0;
 		bestDistance = Double.MAX_VALUE;
 		noProgressTicks = 0;
+		movementRecoveryCooldown = 0;
+		visibleTargetGraceTicks = 0;
 		targetIsBoss = false;
-		reactionTicks = 0;
+		farmPhase = FarmPhase.IDLE;
+		lastCompletedTargetId = -1;
+		lastCompletedTick = Long.MIN_VALUE / 2;
+		farmCycles = 0;
 		bossCheckTimer = 0;
 		clearReposition();
 		handledMechanic = null;
@@ -297,6 +312,7 @@ public final class VoidgloomModule extends AbstractModule {
 
 	private void searchTarget(Framework f) {
 		ModConfig cfg = ModConfig.get();
+		farmPhase = FarmPhase.SEARCHING;
 		if (searchTimer-- > 0) {
 			return; // recherche d'entités espacée
 		}
@@ -307,10 +323,17 @@ public final class VoidgloomModule extends AbstractModule {
 		double range = cfg.farmMobs ? Math.max(cfg.targetSearchRange, cfg.farmSearchRange) : cfg.targetSearchRange;
 		// Le boss est toujours prioritaire ; sinon on farme l'Enderman normal le plus proche pour le faire apparaître.
 		EnderMan boss = f.targetSelector().select(result.bosses(), ps.position(), null, range);
-		EnderMan picked = boss != null ? boss : f.targetSelector().selectBy(reachable(f, result.mobs()), m -> approachCost(f, ps, m));
+		EnderMan picked = boss != null ? boss : selectFarmTarget(f, ps, reachable(f, result.mobs()));
+		if (picked != null && Debug.enabled()) {
+			float acquisitionAngle = Math.abs(RotationController.yawDelta(ps.eyePosition(), picked.getBoundingBox().getCenter(), ps.yaw()));
+			Debug.log("Cible", () -> String.format(java.util.Locale.ROOT,
+				"ACQUISITION # %d angle=%.0f° distance=%.1f candidats=%d bosses=%d mobs=%d",
+				picked.getId(), acquisitionAngle, ps.position().distanceTo(picked.position()), result.endermen(), result.bosses().size(), result.mobs().size()));
+		}
 		if (picked != null) {
 			target = picked;
 			noLosTicks = 0;
+			outOfRangeTicks = 0;
 		engagedTicks = -1;
 		engageStartRatio = -1;
 		acquiredTicks = 0;
@@ -319,9 +342,9 @@ public final class VoidgloomModule extends AbstractModule {
 		bestDistance = Double.MAX_VALUE;
 		noProgressTicks = 0;
 			targetIsBoss = boss != null;
+			farmPhase = targetIsBoss ? FarmPhase.BOSS_INTERRUPT : FarmPhase.ENGAGING;
 			logSelected(f, picked, targetIsBoss, targetIsBoss ? "boss prioritaire (propriétaire/niveau/nom validés)"
 				: "farm : coût d'approche le plus bas parmi " + result.mobs().size() + " Enderman détecté(s)");
-			reactionTicks = transitionDelay(f, picked);
 			Debug.log("Voidgloom", () -> (targetIsBoss ? "Boss trouvé : " : "Enderman à farmer : ")
 				+ f.entityInfo().resolve(ps.level(), picked));
 			fsm.transition(VoidgloomState.FOLLOWING_TARGET);
@@ -336,10 +359,11 @@ public final class VoidgloomModule extends AbstractModule {
 
 	private static String describeTarget(Framework f, EnderMan t, boolean boss) {
 		PlayerState ps = f.player();
+		float targetAngle = RotationController.yawDelta(ps.eyePosition(), t.getBoundingBox().getCenter(), ps.yaw());
 		return String.format(java.util.Locale.ROOT,
-			"id=%d type=%s uuid=%s pos=(%.1f, %.1f, %.1f) distance=%.1f hp=%.0f/%.0f valide=%s boss=%s",
+			"id=%d type=%s uuid=%s pos=(%.1f, %.1f, %.1f) distance=%.1f angle=%.0f° hp=%.0f/%.0f valide=%s deadOrDying=%s removed=%s boss=%s",
 			t.getId(), net.minecraft.world.entity.EntityType.getKey(t.getType()), t.getUUID(), t.getX(), t.getY(), t.getZ(),
-			ps.position().distanceTo(t.position()), t.getHealth(), t.getMaxHealth(), TargetSelector.isValid(t), boss);
+			ps.position().distanceTo(t.position()), targetAngle, t.getHealth(), t.getMaxHealth(), TargetSelector.isValid(t), t.isDeadOrDying(), t.isRemoved(), boss);
 	}
 
 	private EnderMan previousTarget;
@@ -401,15 +425,17 @@ public final class VoidgloomModule extends AbstractModule {
 		Debug.log("Cible", () -> line);
 	}
 
-	/** Retire les Enderman récemment abandonnés car inaccessibles (derrière un mur, sur une autre plateforme...). */
+	/**
+	 * Détection à 360° : un mob peut être connu même s'il apparaît derrière le joueur.
+	 *
+	 * <p>La détection ne décide PAS à elle seule de la cible. Le coût d'acquisition applique une forte pénalité d'angle
+	 * pour éviter qu'un nouveau mob apparu dans le dos déclenche un demi-tour alors qu'une cible plus naturelle est déjà
+	 * disponible devant. Une cible déjà engagée n'est jamais filtrée par l'angle.</p>
+	 */
 	private java.util.List<EnderMan> reachable(Framework f, java.util.List<EnderMan> mobs) {
 		skipped.values().removeIf(until -> until <= clock);
-		PlayerState ps = f.player();
-		float limit = ModConfig.get().farmViewAngleDeg;
-		// Un mob apparu dans le dos n'est pas censé être vu : on ne se retourne pas pour lui (la cible déjà suivie reste valable).
-		return mobs.stream().filter(m -> !skipped.containsKey(m.getId()))
-			.filter(m -> limit <= 0 || limit >= 180 || m == target
-				|| Math.abs(RotationController.yawDelta(ps.eyePosition(), m.position(), ps.yaw())) <= limit)
+		return mobs.stream()
+			.filter(m -> !skipped.containsKey(m.getId()))
 			.toList();
 	}
 
@@ -435,59 +461,71 @@ public final class VoidgloomModule extends AbstractModule {
 			return;
 		}
 		EnderMan current = target;
-		f.hints().setGlance(f.targetSelector().selectBy(
-			reachable(f, result.mobs()).stream().filter(m -> m != current).toList(), m -> approachCost(f, ps, m)));
+		java.util.List<EnderMan> glanceCandidates = reachable(f, result.mobs()).stream()
+			.filter(m -> m != current)
+			.filter(m -> Math.abs(RotationController.yawDelta(ps.eyePosition(), m.position(), ps.yaw())) <= 100.0f)
+			.toList();
+		f.hints().setGlance(f.targetSelector().selectBy(glanceCandidates, m -> approachCost(f, ps, m)));
 	}
 
-	/** Toutes les ~1 s : un Enderman nettement plus proche que celui qu'on poursuit ? Alors on change (sauf si on le frappe déjà). */
+	/**
+	 * La cible engagée reste prioritaire : on ne change plus de mob simplement parce qu'un autre est plus proche.
+	 *
+	 * <p>La perte de cible, l'absence prolongée de progression, le blocage et les délais de kill sont gérés dans
+	 * {@link #combatTick(Framework)}. Cela évite les oscillations A→B→A pendant qu'un combat est en cours. Le scan 360°
+	 * reste actif pour acquérir une nouvelle cible dès que la précédente est réellement abandonnée.</p>
+	 */
 	private boolean retargetNearest(Framework f, VoidgloomTarget.Result result, ModConfig cfg) {
-		retargetAccum += cfg.targetSearchIntervalTicks;
-		if (retargetAccum < cfg.retargetIntervalTicks) {
-			return false;
-		}
-		retargetAccum = 0;
-		PlayerState ps = f.player();
-		if (TargetInfo.of(ps, target).distance() <= cfg.attackDistance && f.combat().hasStableLineOfSight(ps, target)) {
-			Debug.log("Retarget", () -> String.format(java.util.Locale.ROOT, "ÉVALUATION cible actuelle #%d à %.1f : GARDÉE (au contact et visible)",
-				target.getId(), TargetInfo.of(ps, target).distance()));
-			return false; // déjà au contact : on ne lâche pas la cible qu'on frappe
-		}
-		EnderMan nearest = f.targetSelector().select(reachable(f, result.mobs()), ps.position(), null,
-			Math.max(cfg.targetSearchRange, cfg.farmSearchRange));
-		if (nearest == null || nearest == target) {
-			Debug.log("Retarget", () -> String.format(java.util.Locale.ROOT, "ÉVALUATION cible actuelle #%d à %.1f : GARDÉE (aucun autre candidat plus proche)",
-				target.getId(), target.position().distanceTo(ps.position())));
-			return false;
-		}
-		double current = target.position().distanceTo(ps.position());
-		double other = nearest.position().distanceTo(ps.position());
-		if (other >= current - cfg.retargetMarginBlocks) {
-			Debug.log("Retarget", () -> String.format(java.util.Locale.ROOT,
-				"ÉVALUATION cible actuelle #%d à %.1f vs candidat #%d à %.1f (gain %.1f < marge %.1f) : GARDÉE",
-				target.getId(), current, nearest.getId(), other, current - other, cfg.retargetMarginBlocks));
+		if (target == null || !TargetSelector.isValid(target)) {
 			return false;
 		}
 		Debug.log("Retarget", () -> String.format(java.util.Locale.ROOT,
-			"ÉVALUATION cible actuelle #%d à %.1f vs candidat #%d à %.1f (gain %.1f >= marge %.1f) : CHANGEMENT (cible suivie depuis %d ticks, valide=%s, visible=%s)",
-			target.getId(), current, nearest.getId(), other, current - other, cfg.retargetMarginBlocks, acquiredTicks,
-			TargetSelector.isValid(target), f.combat().hasLineOfSight(ps, target)));
-		Debug.log("Voidgloom", () -> "Enderman plus proche trouvé (" + Math.round(other) + " au lieu de " + Math.round(current) + ")");
-		stopActions(f);
-		logDropped(f, target, targetIsBoss, "retarget : un autre Enderman est plus proche de " + String.format(java.util.Locale.ROOT, "%.1f", current - other)
-			+ " blocs (marge " + cfg.retargetMarginBlocks + "), pas encore au contact");
-		target = nearest;
-		logSelected(f, nearest, false, "retarget : plus proche (" + Math.round(other) + " au lieu de " + Math.round(current) + ")");
-		noLosTicks = 0;
-		engagedTicks = -1;
-		engageStartRatio = -1;
-		acquiredTicks = 0;
-		stuckAnchor = null;
-		stuckTicks = 0;
-		bestDistance = Double.MAX_VALUE;
-		noProgressTicks = 0;
-		reactionTicks = 0;
-		fsm.transition(VoidgloomState.FOLLOWING_TARGET);
-		return true;
+			"Cible #%d conservée : retarget opportuniste désactivé (cible engagée persistante)", target.getId()));
+		return false;
+	}
+
+	/**
+	 * Acquisition 360° mais progressive : on peut détecter un mob n'importe où, mais un nouveau mob directement dans le dos
+	 * ne doit pas gagner contre un mob naturel à l'avant simplement grâce à quelques blocs de distance.
+	 */
+	private EnderMan selectFarmTarget(Framework f, PlayerState ps, java.util.List<EnderMan> candidates) {
+		if (candidates == null || candidates.isEmpty()) {
+			return null;
+		}
+
+		// Vision 360° : aucun groupe angulaire n'est exclu.
+		// L'angle influence le coût mais ne peut plus masquer une cible simplement parce qu'un autre Enderman
+		// se trouve dans le cône avant. Cela évite de "voir" une cible puis de ne jamais la considérer.
+		EnderMan best = null;
+		double bestCost = Double.POSITIVE_INFINITY;
+		EnderMan bestFront = null;
+		double bestFrontCost = Double.POSITIVE_INFINITY;
+		for (EnderMan m : candidates) {
+			if (!TargetSelector.isValid(m)) continue;
+			float angle = Math.abs(RotationController.yawDelta(ps.eyePosition(), m.getBoundingBox().getCenter(), ps.yaw()));
+			double base = approachCost(f, ps, m);
+			double normalized = Math.min(1.0, angle / 180.0);
+			double directionalPenalty = 2.0 * normalized * normalized;
+			if (angle > 75.0f) directionalPenalty += (angle - 75.0) * 0.07;
+			if (angle > 105.0f) directionalPenalty += 7.0 + (angle - 105.0) * 0.16;
+			if (angle > 140.0f) directionalPenalty += 8.0;
+			double cost = base + directionalPenalty;
+			if (cost < bestCost) {
+				bestCost = cost;
+				best = m;
+			}
+			if (angle <= 100.0f && cost < bestFrontCost) {
+				bestFrontCost = cost;
+				bestFront = m;
+			}
+		}
+		// Toutes les cibles restent candidates (vision 360°), mais une cible devant/on côté est préférée tant qu'une
+		// cible dans le dos n'apporte pas un avantage vraiment significatif. Cela évite le demi-tour pour un mob juste
+		// un peu plus proche derrière le joueur.
+		if (bestFront != null && best != null && best != bestFront && bestCost >= bestFrontCost - 8.0) {
+			return bestFront;
+		}
+		return best;
 	}
 
 	private void updateCounters(VoidgloomTarget.Result result) {
@@ -513,14 +551,75 @@ public final class VoidgloomModule extends AbstractModule {
 			return retargetNearest(f, result, cfg);
 		}
 		Debug.log("Voidgloom", () -> "Le boss est apparu, changement de cible");
+		farmPhase = FarmPhase.BOSS_INTERRUPT;
 		stopActions(f);
 		logDropped(f, target, targetIsBoss, "le boss est apparu");
 		target = boss;
 		logSelected(f, boss, true, "boss apparu pendant le farm");
 		targetIsBoss = true;
-		reactionTicks = transitionDelay(f, boss);
 		fsm.transition(VoidgloomState.FOLLOWING_TARGET);
 		return true;
+	}
+
+
+	/**
+	 * Termine proprement un cycle de farm dès que la cible est réellement morte.
+	 * <p>La logique est volontairement immédiate : pas de tour d'attente, pas de cible morte conservée,
+	 * pas de second passage de l'anti-stuck. On marque brièvement l'ID comme terminé puis on relance le scan.
+	 * Pour un boss, la même boucle reprend ensuite sur un Enderman de farm si le mode farm est actif.</p>
+	 */
+	private void completeKilledTarget(Framework f) {
+		if (target == null) {
+			return;
+		}
+		long now = clock;
+		int id = target.getId();
+		if (id == lastCompletedTargetId && now - lastCompletedTick < 3) {
+			return;
+		}
+		EnderMan finished = target;
+		boolean boss = targetIsBoss;
+		lastCompletedTargetId = id;
+		lastCompletedTick = now;
+		farmPhase = FarmPhase.FINISHING_TARGET;
+		farmCycles++;
+		kills++;
+		// Empêche le scan suivant de reprendre instantanément le cadavre/entité encore présente pendant sa disparition.
+		skipped.put(id, clock + Math.max(10, Math.min(ModConfig.get().skipTargetTicks, 40)));
+		Debug.log("Farm", () -> "Cycle terminé : cible #" + id + (boss ? " (BOSS)" : "")
+			+ " tuée -> nouveau scan immédiat, cycles=" + farmCycles);
+		logDropped(f, finished, boss, boss ? "boss tué : retour automatique au farm" : "Enderman tué : cible suivante");
+
+		attackTask = null;
+		attackTaskHold = false;
+		attackTaskTarget = null;
+		clearReposition();
+		handledMechanic = null;
+		mechanics.reset();
+		f.hints().setGlance(null);
+		f.tasks().cancelOwner(f, ID);
+		f.movement().reset();
+		f.rotation().cancel();
+
+		target = null;
+		targetIsBoss = false;
+		noLosTicks = 0;
+		outOfRangeTicks = 0;
+		engagedTicks = -1;
+		engageStartRatio = -1;
+		acquiredTicks = 0;
+		stuckAnchor = null;
+		stuckTicks = 0;
+		bestDistance = Double.MAX_VALUE;
+		noProgressTicks = 0;
+		movementRecoveryCooldown = 0;
+		visibleTargetGraceTicks = 0;
+		searchTimer = 0;
+		bossCheckTimer = 0;
+
+		fsm.transition(VoidgloomState.SEARCHING_TARGET);
+		// Reboucle sans attendre le prochain intervalle de recherche : c'est le cœur de la boucle de farm.
+		searchTarget(f);
 	}
 
 	// ========================================
@@ -534,17 +633,32 @@ public final class VoidgloomModule extends AbstractModule {
 		double base = targetIsBoss ? cfg.targetSearchRange : Math.max(cfg.targetSearchRange, cfg.farmSearchRange);
 		double keep = base * cfg.targetKeepRangeFactor;
 		com.valafre.automod.debug.CombatTrace.moduleTarget(target);
+		// Boucle de farm : une cible morte est finalisée immédiatement et remplacée par un nouveau scan.
 		if (target != null && target.isDeadOrDying()) {
-			kills++;
+			completeKilledTarget(f);
+			return;
 		}
 		if (hudRefreshTimer-- <= 0) { // valeurs d'affichage : 2 fois par seconde suffisent
 			hudRefreshTimer = 10;
 			refreshHudInfo(f);
 		}
-		if (!TargetSelector.isValid(target) || target.position().distanceToSqr(ps.position()) > keep * keep) {
+		if (!TargetSelector.isValid(target)) {
 			Debug.log("Voidgloom", () -> "Cible perdue");
-			dropReason = !TargetSelector.isValid(target) ? "invalide (morte ou retirée du monde)"
-				: "hors de la portée de conservation (" + Math.round(Math.sqrt(target.position().distanceToSqr(ps.position()))) + " > " + Math.round(keep) + ")";
+			dropReason = "invalide (morte ou retirée du monde)";
+		fsm.transition(VoidgloomState.TARGET_LOST);
+			return;
+		}
+		double targetDistance = target.position().distanceTo(ps.position());
+		if (movementRecoveryCooldown > 0) movementRecoveryCooldown--;
+		double hardRange = Math.max(keep + 4.0, targetIsBoss ? cfg.targetSearchRange + 6.0 : Math.max(cfg.targetSearchRange, cfg.farmSearchRange) + 6.0);
+		if (targetDistance > keep) {
+			outOfRangeTicks++;
+		} else {
+			outOfRangeTicks = 0;
+		}
+		if (targetDistance > hardRange || outOfRangeTicks > TARGET_OUT_OF_RANGE_GRACE_TICKS) {
+			Debug.log("Voidgloom", () -> "Cible perdue");
+			dropReason = "hors zone durablement : distance=" + Math.round(targetDistance * 10.0) / 10.0 + " keep=" + Math.round(keep * 10.0) / 10.0;
 			fsm.transition(VoidgloomState.TARGET_LOST);
 			return;
 		}
@@ -552,25 +666,19 @@ public final class VoidgloomModule extends AbstractModule {
 		if (!targetIsBoss && switchToBossIfSpawned(f)) {
 			return;
 		}
-		if (reactionTicks > 0 && !f.combat().hasLineOfSight(ps, target)) {
-			reactionTicks = 0; // cible cachée derrière un bloc : on ne la fixe pas du regard, le déplacement s'en charge
-		}
-		if (reactionTicks > 0) { // transition : la caméra s'oriente vers la nouvelle cible avant l'engagement
-			reactionTicks--;
-			if (!f.tasks().isRunning(LookAtTask.class)) {
-				EnderMan t = target;
-				f.tasks().submit(f, ID, new LookAtTask(TaskPriority.FOLLOW, () -> f.humanizer().aim(t, f.player())));
-			}
-			return;
-		}
-
 		// La mécanique au sol n'existe que pendant le combat contre le boss.
 		BlockPos found = targetIsBoss ? mechanics.poll(ps) : null;
 
-		// Un Enderman qu'on ne voit plus depuis trop longtemps (mur, autre plateforme) est abandonné pour un autre.
-		noLosTicks = f.combat().hasStableLineOfSight(ps, target) ? 0 : noLosTicks + 1;
-		// Enderman normal : 3 s après le premier contact sans l'avoir tué (ou jamais atteint), on en prend un autre.
-		// Le boss, lui, n'est JAMAIS abandonné.
+		// Une cible engagée reste suivie tant qu'elle est réellement visible et pertinente.
+		// On distingue donc la détection d'un mob de la décision d'abandonner le mob déjà engagé.
+		boolean visibleNow = f.combat().hasStableLineOfSight(ps, target);
+		noLosTicks = visibleNow ? 0 : noLosTicks + 1;
+		boolean targetStillRelevant = visibleNow && targetDistance <= Math.max(cfg.attackDistance * 2.5, 6.0);
+		if (targetStillRelevant) {
+			visibleTargetGraceTicks = Math.min(visibleTargetGraceTicks + 1, 240);
+		} else {
+			visibleTargetGraceTicks = 0;
+		}
 		acquiredTicks++;
 		if (engagedTicks >= 0) {
 			engagedTicks++;
@@ -587,7 +695,8 @@ public final class VoidgloomModule extends AbstractModule {
 			stuckTicks++;
 		}
 		boolean stuck = stuckTicks > cfg.stuckSkipTicks;
-		// Progression : si on n'arrive pas à se rapprocher (ex. mob perché au-dessus), on change de cible rapidement.
+		// Progression : une cible visible ne doit pas être abandonnée uniquement parce que le joueur a momentanément
+		// cessé de gagner du terrain. On récupère le mouvement et on garde la cible, comme un joueur humain.
 		double dist = TargetInfo.of(ps, target).distance();
 		if (dist <= cfg.attackDistance || dist < bestDistance - 0.5) {
 			bestDistance = dist;
@@ -597,7 +706,8 @@ public final class VoidgloomModule extends AbstractModule {
 		}
 		boolean elevated = target.getY() - ps.position().y > 2.5;
 		boolean noProgress = noProgressTicks > (elevated && !cfg.acceptElevatedMobs ? cfg.noProgressElevatedTicks : cfg.noProgressTicks);
-		// Délai de combat écoulé : on continue seulement si les PV de la cible baissent réellement (mob solide mais en train de mourir).
+		// Délai de combat : une cible visible et pertinente bénéficie d'une vraie grâce de combat ; on ne bascule
+		// pas arbitrairement sur un Enderman lointain au moment où celui-ci est pourtant devant nous.
 		boolean killTimeout = false;
 		if (engagedTicks > cfg.mobKillTimeoutTicks) {
 			double ratio = targetHealthRatio(f);
@@ -609,11 +719,26 @@ public final class VoidgloomModule extends AbstractModule {
 			}
 		}
 		boolean acquireTimeout = acquiredTicks > cfg.mobAcquireTimeoutTicks;
-		if (!targetIsBoss && (killTimeout || acquireTimeout || stuck || noProgress || noLosTicks > cfg.unreachableAfterTicks)) {
+		if (!targetIsBoss && targetStillRelevant) {
+			// La cible reste visible : ne pas la remplacer pour un timeout ou un score de progression temporairement mauvais.
+			// Si le mouvement s'est coincé, on force uniquement une nouvelle tentative de déplacement.
+			if ((stuck || noProgress) && movementRecoveryCooldown <= 0) {
+				f.movement().reset();
+				movementRecoveryCooldown = 20;
+				stuckTicks = 0;
+				noProgressTicks = 0;
+				Debug.log("Movement", () -> "Récupération de déplacement : cible visible conservée, nouvelle tentative de trajectoire");
+			}
+			// Tant que la cible est visible et pertinente, les timeouts d'acquisition/kill ne provoquent pas de retarget.
+			killTimeout = false;
+			acquireTimeout = false;
+		}
+		boolean abandonForVisibility = noLosTicks > cfg.unreachableAfterTicks;
+		if (!targetIsBoss && (killTimeout || acquireTimeout || abandonForVisibility)) {
 			dropReason = "abandon d'un Enderman de farm : killTimeout=" + killTimeout + " acquireTimeout=" + acquireTimeout
-				+ " joueurBloqué=" + stuck + " sansProgrès=" + noProgress + " sansLigneDeVue=" + (noLosTicks > cfg.unreachableAfterTicks);
+				+ " sansLigneDeVue=" + abandonForVisibility + " visibleEtPertinent=" + targetStillRelevant;
 			skipped.put(target.getId(), clock + cfg.skipTargetTicks);
-			Debug.log("Voidgloom", () -> "Enderman non tué à temps / inaccessible, on en prend un autre");
+			Debug.log("Voidgloom", () -> "Enderman réellement perdu/inaccessible, nouveau scan");
 			fsm.transition(VoidgloomState.TARGET_LOST);
 			return;
 		}
@@ -673,26 +798,18 @@ public final class VoidgloomModule extends AbstractModule {
 	}
 
 	/**
-	 * Attente avant d'engager une nouvelle cible, proportionnelle à l'angle dont il faut tourner (1 tick par 45 degrés, plafonné) :
-	 * nulle si la cible est déjà dans l'axe, plus longue pour un demi-tour. Aucun hasard : elle vient de la situation.
-	 */
-	private int transitionDelay(Framework f, net.minecraft.world.entity.Entity entity) {
-		ModConfig cfg = ModConfig.get();
-		if (!cfg.humanize) {
-			return 0;
-		}
-		PlayerState ps = f.player();
-		float angle = Math.abs(RotationController.yawDelta(ps.eyePosition(), entity.position(), ps.yaw()));
-		return Math.min(cfg.transitionMaxTicks, (int) (angle / 45.0f));
-	}
-
-	/**
 	 * Coût d'une cible candidate (plus bas = préférée) : distance + petite pénalité par degré à tourner, plus de
 	 * fortes pénalités pour les mobs hors de l'écran ou cachés derrière un bloc. On choisit donc en priorité ceux qu'on voit.
 	 */
 	private static double approachCost(Framework f, PlayerState ps, net.minecraft.world.entity.Entity entity) {
-		float angle = Math.abs(RotationController.yawDelta(ps.eyePosition(), entity.position(), ps.yaw()));
-		double cost = ps.position().distanceTo(entity.position()) + 0.02 * angle;
+		float angle = Math.abs(RotationController.yawDelta(ps.eyePosition(), entity.getBoundingBox().getCenter(), ps.yaw()));
+		double normalizedAngle = Math.min(1.0, angle / 180.0);
+		// Acquisition 360° mais sans demi-tour opportuniste : la pénalité augmente fortement dans le dos.
+		double rearPenalty = 10.0 * normalizedAngle * normalizedAngle * normalizedAngle;
+		if (angle >= 150.0f) {
+			rearPenalty += 4.0;
+		}
+		double cost = ps.position().distanceTo(entity.position()) + 0.025 * angle + rearPenalty;
 		// Un mob perché au-dessus ou en contrebas est souvent inaccessible : forte pénalité au-delà de 1,5 bloc de dénivelé.
 		double dy = Math.abs(entity.getY() - ps.position().y);
 		if (dy > 1.5 && !ModConfig.get().acceptElevatedMobs) {

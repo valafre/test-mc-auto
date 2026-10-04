@@ -20,7 +20,7 @@ public final class ModConfig {
 
 	private static final Logger LOGGER = LoggerFactory.getLogger("automod");
 	private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-	private static final int CURRENT_VERSION = 16;
+	private static final int CURRENT_VERSION = 18;
 	private static ModConfig instance = new ModConfig();
 
 	/** Sert à migrer les anciens fichiers de config dont les valeurs par défaut ont changé. */
@@ -144,7 +144,7 @@ public final class ModConfig {
 	/** Préférer les mobs visibles à l'écran (champ de vision) quand on choisit une cible. */
 	public boolean preferOnScreen = true;
 	/** Demi-angle (degrés, depuis la direction du regard) dans lequel un mob peut être pris pour cible ; 180 = tout autour. */
-	public float farmViewAngleDeg = 100.0f;
+	public float farmViewAngleDeg = 180.0f;
 
 	// ========================================
 	// HUMANISATION
@@ -183,11 +183,11 @@ public final class ModConfig {
 	/** Étale chaque pas de rotation sur les images du tick (caméra fluide à haut FPS au lieu de 20 sauts/s). */
 	public boolean smoothFrameRotation = true;
 	/** Caméra naturelle : vitesse angulaire maximale (degrés/tick) ; 18 = environ 360 degrés/s en crête. */
-	public float camPeakSpeedDeg = 16.0f;
+	public float camPeakSpeedDeg = 23.0f;
 	/** Variation maximale de la vitesse de la caméra par tick (degrés/tick²) : démarrage et arrêt progressifs, jamais brusques. */
-	public float camMaxAccelDeg = 5.0f;
+	public float camMaxAccelDeg = 7.0f;
 	/** Amortissement du ressort de caméra : 1 = aucun dépassement (robotique) ; 0.7 = léger dépassement puis retour, comme une vraie main. */
-	public float camDamping = 0.85f;
+	public float camDamping = 0.90f;
 	/** Micro-mouvements lents de la caméra (suite de sinusoïdes déphasées, pas de bruit aléatoire saccadé). Amplitude en degrés. */
 	public boolean camTremor = true;
 	public float camTremorDeg = 0.08f;
@@ -199,9 +199,9 @@ public final class ModConfig {
 	/** Courtes pauses de clic de temps en temps (rythme humain), qui s'ajoutent à la cadence 10-13 CPS. */
 	public boolean attackPauses = true;
 	/** Durée minimale (ticks) d'un mouvement de caméra, même pour un tout petit angle. */
-	public float camMinSettleTicks = 3.5f;
+	public float camMinSettleTicks = 2.8f;
 	/** Ticks ajoutés par doublement de (angle / taille apparente de la cible) : grand angle ou petite cible = plus long. */
-	public float camSettleSlope = 2.0f;
+	public float camSettleSlope = 1.8f;
 	/** Zone de tolérance (fraction de la taille apparente de la cible) : on y entre sous camLockIn, on en sort au-dessus de camLockOut. */
 	public float camLockIn = 0.3f;
 	public float camLockOut = 0.7f;
@@ -417,6 +417,16 @@ public final class ModConfig {
 		}
 		if (c.configVersion < 16) { // navigation asynchrone : valeurs par défaut des nouveaux champs
 			c.navReplanTicks = 2;
+		}
+		if (c.configVersion < 17) { // acquisition 360° : la détection couvre tout autour, l'angle ne bloque plus un candidat
+			c.farmViewAngleDeg = 180.0f;
+		}
+		if (c.configVersion < 18) { // caméra plus réactive sur les grands angles, tout en restant accélérée/décélérée
+			c.camPeakSpeedDeg = 23.0f;
+			c.camMaxAccelDeg = 7.0f;
+			c.camDamping = 0.90f;
+			c.camMinSettleTicks = 2.8f;
+			c.camSettleSlope = 1.8f;
 		}
 		c.configVersion = CURRENT_VERSION;
 	}

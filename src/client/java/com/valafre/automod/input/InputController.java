@@ -50,6 +50,17 @@ public final class InputController {
 	}
 
 	/** Touches actuellement pressées par ce contrôleur, ex. "FORWARD SPRINT" (diagnostic). */
+	/** Touches demandées pendant le tick courant, avant application. */
+	public String describeIntent() {
+		StringBuilder sb = new StringBuilder();
+		for (Key key : Key.values()) {
+			if (intent[key.ordinal()]) {
+				sb.append(key.name()).append(' ');
+			}
+		}
+		return sb.isEmpty() ? "aucune" : sb.toString().trim();
+	}
+
 	public String describeApplied() {
 		StringBuilder sb = new StringBuilder();
 		for (Key key : Key.values()) {

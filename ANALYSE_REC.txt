@@ -1,0 +1,32 @@
+ANALYSE DU DEPLACEMENT / COMBAT
+
+La touche Page Up demarre maintenant deux enregistrements synchronises :
+
+1) automod-camera-*.csv
+   Trace camera historique, une ligne par mise a jour de rotation.
+
+2) automod-analysis-*.csv
+   Trace complete, une ligne par tick.
+
+Le CSV d'analyse contient notamment :
+- position / vitesse / sol / collision du joueur ;
+- touches demandees et touches appliquees ;
+- cible, position, distance, mouvement brutal/teleportation, visibilite ;
+- intention de combat et lookEnemy ;
+- source camera, lock interne, erreur vers la cible, vitesse et pas de rotation ;
+- ecritures successives de camera et ecrasements ;
+- chemin global, waypoint, validite, SAFE/NO_SAFE, generation, age ;
+- cap candidat / cap engage, duree d'engagement ;
+- scores straight / gauche / droite, meilleur / second, nombre de candidats ;
+- terrain sous le joueur, hauteur de surface, riseAhead, bloc devant, forme partielle ;
+- vitesse et cap reels du mouvement ;
+- raisons de refus et etat du job de navigation.
+
+Pour reproduire un bug :
+1. lancer le mod ;
+2. activer Page Up ;
+3. reproduire le probleme pendant 10 a 30 secondes ;
+4. appuyer de nouveau sur Page Up ;
+5. envoyer les deux CSV, et si necessaire logs/latest.log.
+
+IMPORTANT : cette instrumentation ne doit pas modifier les decisions de navigation/combat. Elle ne fait que capturer l'etat produit par les composants existants. Les informations detaillees sont ecrites uniquement pendant l'enregistrement.

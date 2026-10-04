@@ -61,6 +61,45 @@ public final class CombatTrace {
 		moduleTarget = target;
 	}
 
+	public static Entity currentModuleTarget() {
+		return moduleTarget;
+	}
+
+	public static Entity currentTaskTarget() {
+		return taskTarget;
+	}
+
+	public static boolean currentVisible() {
+		return taskTarget != null && Debug.enabled() && stableSight;
+	}
+
+	public static boolean currentStableSight() {
+		return stableSight;
+	}
+
+	public static String currentIntent() {
+		return intent;
+	}
+
+	public static boolean lookEnemy() {
+		return intent.contains("lookEnemy=true");
+	}
+
+	public static boolean rotationOverwritten() {
+		return rotationOverwritten;
+	}
+
+	public static String rotationWritesText() {
+		return rotationWrites.toString();
+	}
+
+	public static String[] inputRejectedText() {
+		if (inputRejected.length() == 0) {
+			return new String[0];
+		}
+		return inputRejected.toString().trim().split(" ");
+	}
+
 	public static void taskTarget(Entity target, boolean sight, String intentText) {
 		taskTarget = target;
 		stableSight = sight;

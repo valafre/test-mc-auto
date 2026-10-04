@@ -42,9 +42,12 @@ public class AutoModClient implements ClientModInitializer {
 		while (Keybinds.recordCamera.consumeClick()) {
 			boolean started = framework.recorder().toggle() != null;
 			if (mc.player != null) {
-				mc.player.sendSystemMessage(Component.literal(started
-					? "[AutoMod] Enregistrement caméra démarré : " + framework.recorder().file().getFileName()
-					: "[AutoMod] Enregistrement caméra arrêté : " + framework.recorder().file()));
+				String message = started
+					? "[AutoMod] Rec démarré | caméra=" + framework.recorder().file().getFileName()
+						+ " | analyse=" + (framework.recorder().analysisFile() == null ? "indisponible" : framework.recorder().analysisFile().getFileName())
+					: "[AutoMod] Rec arrêté | caméra=" + framework.recorder().file()
+						+ " | analyse=" + framework.recorder().analysisFile();
+				mc.player.sendSystemMessage(Component.literal(message));
 			}
 		}
 		while (Keybinds.openGui.consumeClick()) {
