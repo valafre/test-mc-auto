@@ -80,6 +80,8 @@ public final class CombatPositioner {
 		Level level = state.level();
 		Vec3 player = state.position();
 		Vec3 tpos = target.position();
+		// Les positions candidates autour de la cible doivent être présentes dans le cache avant les checks de géométrie.
+		NavService.get().prepareArea(level, tpos.x, tpos.y, tpos.z, 8, Math.min(0.5, Math.max(0.1, cfg.navSnapshotBudgetMs * 0.2)));
 		AABB box = target.getBoundingBox();
 		Vec3 aim = new Vec3(box.getCenter().x, box.minY + box.getYsize() * 0.7, box.getCenter().z);
 		double[] radii = {cfg.combatMinDistance + 0.3, cfg.approachDistance};

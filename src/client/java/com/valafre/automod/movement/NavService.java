@@ -66,6 +66,21 @@ public final class NavService {
 		return cache.live();
 	}
 
+
+	/** Prépare une zone autour d'un point sans jamais laisser les checks live construire des tuiles à la demande. */
+	public int prepareArea(Level level, double centerX, double centerY, double centerZ, int radius, double budgetMs) {
+		ModConfig c = ModConfig.get();
+		cache.begin(level, c.navTileTtlTicks);
+		int r = Math.max(4, radius);
+		int minX = (int) Math.floor(centerX) - r;
+		int maxX = (int) Math.floor(centerX) + r;
+		int minZ = (int) Math.floor(centerZ) - r;
+		int maxZ = (int) Math.floor(centerZ) + r;
+		int minY = (int) Math.floor(centerY) - Math.max(3, c.maxDropBlocks + 2);
+		int maxY = (int) Math.floor(centerY) + 5;
+		return cache.prepareRegion(minX, minY, minZ, maxX, maxY, maxZ, centerX, centerZ, budgetMs);
+	}
+
 	/** Paramètres de navigation copiés de la configuration (immuables). */
 	public static NavParams params(boolean light) {
 		ModConfig c = ModConfig.get();

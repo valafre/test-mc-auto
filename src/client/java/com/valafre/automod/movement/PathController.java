@@ -106,6 +106,8 @@ public final class PathController {
 		int maxZ = (int) Math.floor(Math.max(feet.z, gz)) + margin;
 		int minY = (int) Math.floor(Math.min(feet.y, gy)) - cfg.maxDropBlocks - 3;
 		int maxY = (int) Math.floor(Math.max(feet.y, gy)) + 6;
+		// Les tuiles sont préparées par petits budgets sur le thread Minecraft, mais le snapshot lui-même ne construit plus rien.
+		cache.prepareRegion(minX, minY, minZ, maxX, maxY, maxZ, feet.x, feet.z, Math.min(1.25, cfg.navSnapshotBudgetMs));
 		NavGrid grid = cache.snapshot(minX, minY, minZ, maxX, maxY, maxZ, feet.x, feet.z, cfg.navSnapshotBudgetMs);
 		NavParams params = NavService.params(light);
 		long[] failed = activeFailures();
@@ -158,6 +160,8 @@ public final class PathController {
 	 * sur la vue en cache du thread Minecraft. Jamais utilisé pour le déplacement.
 	 */
 	public List<NavPoint> findPath(Level level, BlockPos start, BlockPos goal, int maxNodes) {
+		service.prepareArea(level, start.getX() + 0.5, start.getY(), start.getZ() + 0.5, 8, 0.35);
+		service.prepareArea(level, goal.getX() + 0.5, goal.getY(), goal.getZ() + 0.5, 8, 0.35);
 		NavWorld w = service.live(level);
 		double sy = Walkability.standHeight(level, start);
 		double gy = Walkability.standHeight(level, goal);

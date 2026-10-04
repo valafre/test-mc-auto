@@ -94,6 +94,8 @@ public final class NavGeometry {
 	// ========================================
 
 	private static final int MAX_TOPS = 24;
+	/** Buffers réutilisés par thread : la géométrie est appelée des milliers de fois par un A* et ne doit pas générer de GC. */
+	private static final ThreadLocal<double[]> TOP_BUFFER = ThreadLocal.withInitial(() -> new double[MAX_TOPS]);
 
 	/**
 	 * Dessus des boîtes de collision (non dangereuses, cellules connues) qui touchent l'empreinte du joueur centrée en (x, z),
@@ -144,7 +146,7 @@ public final class NavGeometry {
 	 * comprise), entre y - down et y + up, la plus proche de y (à égalité la plus haute). NaN si aucune.
 	 */
 	public static double feetHeightAt(NavWorld w, double x, double z, double y, double up, double down, double margin) {
-		double[] tops = new double[MAX_TOPS];
+		double[] tops = TOP_BUFFER.get();
 		int n = collectTops(w, x, z, y - down, y + up, tops);
 		double best = Double.NaN;
 		for (int i = 0; i < n; i++) {
@@ -167,12 +169,23 @@ public final class NavGeometry {
 		}
 		double x = cx + 0.5;
 		double z = cz + 0.5;
-		double[] tops = new double[MAX_TOPS];
-		int n = collectTops(w, x, z, cy, cy + 0.999, tops);
+		/*
+		 * La cellule CY contient les pieds, pas le bloc support. Il faut donc regarder la cellule elle-même ET celle
+		 * immédiatement dessous. Cela distingue correctement : bloc plein (support y-1 -> pieds y), demi-dalle basse
+		 * (support y -> pieds y+0.5) et formes partielles similaires.
+		 */
+		double[] tops = TOP_BUFFER.get();
+		int n = collectTops(w, x, z, cy - 0.001, cy + 0.999, tops);
 		double best = Double.NaN;
 		for (int i = 0; i < n; i++) {
-			if ((Double.isNaN(best) || tops[i] > best) && bodyFreeAt(w, x, tops[i], z, 0.0)) {
-				best = tops[i];
+			double top = tops[i];
+			if (top < cy - 0.001 || top > cy + 0.999) {
+				continue;
+			}
+			if ((Double.isNaN(best) || Math.abs(top - cy) < Math.abs(best - cy) - 1.0E-9
+				|| (Math.abs(Math.abs(top - cy) - Math.abs(best - cy)) <= 1.0E-9 && top > best))
+				&& bodyFreeAt(w, x, top, z, 0.0)) {
+				best = top;
 			}
 		}
 		return best;
@@ -184,22 +197,13 @@ public final class NavGeometry {
 
 	/** Hauteur de pieds de la cellule : surface réelle, sinon dessus de la plus haute collision de la cellule, sinon son bas. */
 	public static double standHeight(NavWorld w, int cx, int cy, int cz) {
-		double y = surfaceY(w, cx, cy, cz);
-		if (!Double.isNaN(y)) {
-			return y;
-		}
-		double[] tops = new double[MAX_TOPS];
-		int n = collectTops(w, cx + 0.5, cz + 0.5, cy, cy + 0.999, tops);
-		double best = cy;
-		for (int i = 0; i < n; i++) {
-			best = Math.max(best, tops[i]);
-		}
-		return best;
+		return surfaceY(w, cx, cy, cz);
 	}
 
 	/** Un sol (non dangereux) sous l'empreinte en (x, z) à la hauteur de pieds y (0,06 près) ? */
 	public static boolean supportedAt(NavWorld w, double x, double y, double z) {
-		return collectTops(w, x, z, y - 0.06, y + 0.06, new double[4]) > 0;
+		double[] tops = TOP_BUFFER.get();
+		return collectTops(w, x, z, y - 0.06, y + 0.06, tops) > 0;
 	}
 
 	/** Dénivelé devant (dx, dz) : 0 à plat, positif = monter, +infini si aucune place. Par formes de collision. */
